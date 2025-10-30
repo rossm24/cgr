@@ -1,0 +1,13 @@
+# build outputs
+render.exe
+*.o
+*.obj
+*.ppm
+
+# editor configs
+.vscode/
+.idea/
+
+# mac / windows system files
+.DS_Store
+Thumbs.db
