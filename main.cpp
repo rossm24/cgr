@@ -83,11 +83,10 @@ int main(){
         const std::string scenePath = "../ASCII/scene1.txt";
 
         // ---------- 1) Load Camera ----------
-        // ---------- 1) Load Camera ----------
         Camera cam;
         cam.loadFromSceneTxt(scenePath);
         std::cout << "Loaded camera: " << cam.name << " ("
-                << cam.film_w_px << "x" << cam.film_h_px << ")\n";
+                  << cam.film_w_px << "x" << cam.film_h_px << ")\n";
 
         // ---------- 2) Parse scene objects ----------
         struct Light { Vec3 pos{}; double intensity=0.0; };
@@ -118,7 +117,7 @@ int main(){
                         throw std::runtime_error("LGT: intensity/power missing");
                     L.intensity = power * (1.0/(4.0*3.14159265358979323846));
                 }
-                lights.push_back(L);    // <- NO B2R here
+                lights.push_back(L);
             }
             else if (line.rfind("CUB ", 0) == 0) {
                 CubeAscii C{};
@@ -142,38 +141,37 @@ int main(){
                 spheres.push_back(S);
             }
             else if (line.rfind("PLN ", 0) == 0) {
-                if (!extractVec3(line, "c0", pln.c0)) throw std::runtime_error("PLN: c0 missing");
-                if (!extractVec3(line, "c1", pln.c1)) throw std::runtime_error("PLN: c1 missing");
-                if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
-                if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
-                havePlane = true;
+            if (!extractVec3(line, "c0", pln.c0)) throw std::runtime_error("PLN: c0 missing");
+            if (!extractVec3(line, "c1", pln.c1)) throw std::runtime_error("PLN: c1 missing");
+            if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
+            if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
+
+            havePlane = true;
             }
+
         }
 
         if (lights.empty()) {
             std::cerr << "[warn] No lights; using a default light.\n";
             lights.push_back(Light{ {4,1,6}, 80.0 });
         }
-
-        // keep your “stronger” tweak
+        // your stronger tweak
         for (auto& L : lights) {
             L.intensity *= 2.0;
         }
-
 
         // ---------- 3) Instantiate shapes ----------
         std::vector<Shape*> shapes;
         std::vector<std::unique_ptr<Shape>> owned;
 
-        // Cubes
+        // Cubes — your cube class already fits your framework
         for (size_t i = 0; i < cubes.size(); ++i) {
             auto cb = std::make_unique<Cube>();
             cb->id = int(100 + i);
 
-            // ORIGINAL (no axis swap):
             Mat4 C = composeTRS(
-                cubes[i].center,   // was: B2R(cubes[i].center)
-                cubes[i].euler,    // was: B2R(cubes[i].euler)
+                cubes[i].center,
+                cubes[i].euler,
                 {cubes[i].edge, cubes[i].edge, cubes[i].edge}
             );
 
@@ -182,47 +180,48 @@ int main(){
             owned.push_back(std::move(cb));
         }
 
-        // Spheres (support non-uniform scale from Blender)
+        // Spheres — create using the NEW ctor (name + 6 floats)
         for (size_t i = 0; i < spheres.size(); ++i) {
-            auto sp = std::make_unique<Sphere>();
+            const auto& S = spheres[i];
+
+            auto sp = std::make_unique<Sphere>(
+                "sphere_" + std::to_string(i),
+                (float)S.center.x, (float)S.center.y, (float)S.center.z,
+                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z
+            );
             sp->id = int(200 + i);
 
-            // ORIGINAL positions/rotations/scales straight from file
-            // (this is what you had when you could still see the shapes):
-            Vec3 center = spheres[i].center;
-            Vec3 euler  = spheres[i].euler;
-            Vec3 scale  = spheres[i].scale;
-
-            // keep unit-sphere trick if you want, or remove — up to you.
-            sp->radius = 1.0;
-
-            Mat4 T = composeTRS(center, euler, scale);
-            sp->setTransform(T);
+            // NOTE: our new Sphere already uses its own pos/scale in intersect,
+            // so we don't *have* to call setTransform here.
+            // If you want rotations from Blender to apply, you *could* do:
+            //
+            // Mat4 T = composeTRS(S.center, S.euler, S.scale);
+            // sp->setTransform(T);
+            //
+            // but then you'd be mixing "internal float scale" and "matrix scale".
+            // Let's keep it clean and skip transform for spheres for now.
 
             shapes.push_back(sp.get());
             owned.push_back(std::move(sp));
         }
 
-        // Plane
+        // Plane — create with 4 corners like your friend's
         if (havePlane) {
-            auto pl = std::make_unique<Plane>();
+            auto pl = std::make_unique<Plane>(
+                "plane",
+                pln.c0.x, pln.c0.y, pln.c0.z,
+                pln.c1.x, pln.c1.y, pln.c1.z,
+                pln.c2.x, pln.c2.y, pln.c2.z,
+                pln.c3.x, pln.c3.y, pln.c3.z
+            );
             pl->id = 50;
 
-            // ORIGINAL: you just placed the plane at its Z, ignored XY
-            // Mat4 P = composeTRS({0,0,pln.c0.z}, {0,0,0}, {1,1,1});
+            // we can leave the transform as identity — the corners are already in object space
+            // if later you want to move/rotate it, call pl->setTransform(...)
 
-            // if you want to keep the "put it at its z" behaviour:
-            Mat4 P = composeTRS({0, 0, pln.c0.z}, {0,0,0}, {1,1,1});
-
-            // (if later you want the plane to be where Blender says, change to:)
-            // Mat4 P = composeTRS(pln.c0, {0,0,0}, {1,1,1});
-
-            pl->setTransform(P);
             shapes.push_back(pl.get());
             owned.push_back(std::move(pl));
         }
-
-
 
         // ---------- 4) Build BVH ----------
         std::vector<Shape*> finiteShapes, infiniteShapes;
@@ -241,7 +240,7 @@ int main(){
 
         // ---------- 5) Render ----------
         const int W = cam.film_w_px, H = cam.film_h_px;
-        ImagePPM img(W, H, {135, 206, 235}); // background (will be overwritten on hits)
+        ImagePPM img(W, H, {135, 206, 235}); // background
         const Vec3 white{1,1,1};
 
         auto t0 = std::chrono::high_resolution_clock::now();
@@ -254,13 +253,13 @@ int main(){
                 bool any=false;
 
                 // finite via BVH
-                any |= bvh.intersect(ray, 1e-4, 1e9, best);
-                // infinite linearly
+                any |= bvh.intersect(ray, 1e-5, 1e9, best);
+                // infinite (if any)
                 for(Shape* s : infiniteShapes)
-                    any |= s->intersect(ray, 1e-4, 1e9, best);
+                    any |= s->intersect(ray, 1e-5, 1e9, best);
 
                 if(any){
-                    const auto& L = lights[0];   // just first light for now
+                    const auto& L = lights[0];
                     Vec3 c = shade_diffuse(best, L.pos, L.intensity, white);
                     img.set(x, y, Pixel(clamp8(c.x*255.0), clamp8(c.y*255.0), clamp8(c.z*255.0)));
                 }
@@ -282,5 +281,15 @@ int main(){
     }
     return 0;
 }
+
+/*
+else if (line.rfind("PLN ", 0) == 0) {
+                if (!extractVec3(line, "c0", pln.c0)) throw std::runtime_error("PLN: c0 missing");
+                if (!extractVec3(line, "c1", pln.c1)) throw std::runtime_error("PLN: c1 missing");
+                if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
+                if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
+                havePlane = true;
+*/
+
 
 

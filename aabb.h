@@ -16,6 +16,9 @@ struct AABB {
               -std::numeric_limits<double>::infinity(),
               -std::numeric_limits<double>::infinity() };
 
+    AABB() = default;
+    AABB(const Vec3& mn, const Vec3& mx) : min(mn), max(mx) {}          
+
     void expand(const Vec3& p){
         min.x = std::min(min.x, p.x); min.y = std::min(min.y, p.y); min.z = std::min(min.z, p.z);
         max.x = std::max(max.x, p.x); max.y = std::max(max.y, p.y); max.z = std::max(max.z, p.z);
