@@ -282,14 +282,7 @@ int main(){
     return 0;
 }
 
-/*
-else if (line.rfind("PLN ", 0) == 0) {
-                if (!extractVec3(line, "c0", pln.c0)) throw std::runtime_error("PLN: c0 missing");
-                if (!extractVec3(line, "c1", pln.c1)) throw std::runtime_error("PLN: c1 missing");
-                if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
-                if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
-                havePlane = true;
-*/
+
 
 
 
