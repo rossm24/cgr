@@ -19,6 +19,11 @@
 #include "plane.h"
 #include "bvh.h"
 #include "hit.h"
+#include "material.h"
+#include "material_db.h"
+#include "shade.h"
+#include "scene_accel.h"
+
 
 // ---------------- tiny parsing helpers ----------------
 static bool extractVec3(const std::string& line, const std::string& key, Vec3& out){
@@ -78,6 +83,9 @@ static Vec3 shade_diffuse(const Hit& hit, const Vec3& lightPos, double lightInte
     return c;
 }
 
+
+
+
 int main(){
     try{
         const std::string scenePath = "../ASCII/scene1.txt";
@@ -89,7 +97,7 @@ int main(){
                   << cam.film_w_px << "x" << cam.film_h_px << ")\n";
 
         // ---------- 2) Parse scene objects ----------
-        struct Light { Vec3 pos{}; double intensity=0.0; };
+        // struct Light { Vec3 pos{}; double intensity=0.0; };
         std::vector<Light> lights;
 
         struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; };
@@ -117,6 +125,7 @@ int main(){
                         throw std::runtime_error("LGT: intensity/power missing");
                     L.intensity = power * (1.0/(4.0*3.14159265358979323846));
                 }
+                L.color = {1,1,1}; // white
                 lights.push_back(L);
             }
             else if (line.rfind("CUB ", 0) == 0) {
@@ -153,11 +162,11 @@ int main(){
 
         if (lights.empty()) {
             std::cerr << "[warn] No lights; using a default light.\n";
-            lights.push_back(Light{ {4,1,6}, 80.0 });
+            lights.push_back(Light{ /*pos*/{4,1,6}, /*color*/{1,1,1}, /*intensity*/80.0 });
         }
         // your stronger tweak
         for (auto& L : lights) {
-            L.intensity *= 2.0;
+            L.intensity = 150.0;
         }
 
         // ---------- 3) Instantiate shapes ----------
@@ -223,6 +232,30 @@ int main(){
             owned.push_back(std::move(pl));
         }
 
+        MaterialDB mats;
+
+        // Plane (id 50)
+        mats.by_id[50] = Material{
+            .kd={0.7,0.7,0.75}, .ks={0.1,0.1,0.1}, .shininess=32, .reflectivity=0.05
+        };
+
+        // First cube (id 100)
+        mats.by_id[100] = Material{
+            .kd={0.8,0.3,0.3}, .ks={0.2,0.2,0.2}, .shininess=64, .reflectivity=0.0
+        };
+
+        // Second cube (id 101)
+        mats.by_id[101] = Material{
+            .kd={0.3,0.8,0.3}, .ks={0.6,0.6,0.6}, .shininess=128, .reflectivity=0.4
+        };
+
+        // First sphere (id 200)
+        mats.by_id[200] = Material{
+            .kd={0.02,0.02,0.03}, .ks={1,1,1}, .shininess=256,
+            .reflectivity=0.05, .transparency=0.95, .ior=1.5
+        };
+
+
         // ---------- 4) Build BVH ----------
         std::vector<Shape*> finiteShapes, infiniteShapes;
         for(auto* s : shapes){
@@ -245,7 +278,44 @@ int main(){
 
         auto t0 = std::chrono::high_resolution_clock::now();
 
+        SceneAccel scene{ &bvh, &infiniteShapes };
+
+        RenderParams params;
+        params.maxDepth = 6;
+        params.eps = 1e-4;
+
         for(int y=0;y<H;++y){
+            for(int x=0;x<W;++x){
+                Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
+
+                Vec3 c = shadeRay(ray, 0, scene, lights, mats, params);
+
+                // write to image
+                img.set(x, y,
+                        Pixel(clamp8(c.x * 255.0),
+                              clamp8(c.y * 255.0),
+                              clamp8(c.z * 255.0)));
+            }
+        }
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        std::cout << "Render completed in " << ms << " ms.\n";
+
+        // ---------- 6) Save ----------
+        const std::string outPath = "../Output/render1.ppm";
+        img.save(outPath);
+        std::cout << "Rendered: " << outPath << "\n";
+
+    }catch(const std::exception& e){
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+/*
+for(int y=0;y<H;++y){
             for(int x=0;x<W;++x){
                 Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
 
@@ -265,22 +335,7 @@ int main(){
                 }
             }
         }
-
-        auto t1 = std::chrono::high_resolution_clock::now();
-        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        std::cout << "Render completed in " << ms << " ms.\n";
-
-        // ---------- 6) Save ----------
-        const std::string outPath = "../Output/render1.ppm";
-        img.save(outPath);
-        std::cout << "Rendered: " << outPath << "\n";
-
-    }catch(const std::exception& e){
-        std::cerr << "Error: " << e.what() << "\n";
-        return 1;
-    }
-    return 0;
-}
+*/
 
 
 
