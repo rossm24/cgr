@@ -88,7 +88,7 @@ static Vec3 shade_diffuse(const Hit& hit, const Vec3& lightPos, double lightInte
 
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scene1.txt";
+        const std::string scenePath = "../ASCII/scene2.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -100,10 +100,11 @@ int main(){
         // struct Light { Vec3 pos{}; double intensity=0.0; };
         std::vector<Light> lights;
 
-        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; };
-        struct SphereAscii{ Vec3 center{}; Vec3 euler{}; Vec3 scale{1,1,1}; double radius=1.0; };
+        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color{0.8,0.8,0.8}; };
+        struct SphereAscii{ Vec3 center{}; Vec3 euler{}; Vec3 scale{1,1,1}; double radius=1.0; Vec3 color{0.8,0.8,0.8}; };
         struct PlaneAscii {
             Vec3 c0{}, c1{}, c2{}, c3{};
+            Vec3 color{0.8,0.8,0.8};
         };
 
         std::vector<CubeAscii>   cubes;
@@ -133,6 +134,7 @@ int main(){
                 if (!extractVec3(line, "trans", C.center))
                     throw std::runtime_error("CUB: trans missing");
                 extractVec3(line, "rot", C.euler);
+                extractVec3(line, "color", C.color);
                 double s1=1.0;
                 if (!extractNumber(line, "scale1d", s1))
                     throw std::runtime_error("CUB: scale1d missing");
@@ -145,6 +147,7 @@ int main(){
                     throw std::runtime_error("SPH: loc missing");
                 extractVec3(line, "rot",   S.euler);
                 extractVec3(line, "scale", S.scale);
+                extractVec3(line, "color", S.color);
                 if (!extractNumber(line, "radius", S.radius))
                     throw std::runtime_error("SPH: radius missing");
                 spheres.push_back(S);
@@ -154,6 +157,7 @@ int main(){
             if (!extractVec3(line, "c1", pln.c1)) throw std::runtime_error("PLN: c1 missing");
             if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
             if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
+            extractVec3(line, "color", pln.color);
 
             havePlane = true;
             }
@@ -164,10 +168,7 @@ int main(){
             std::cerr << "[warn] No lights; using a default light.\n";
             lights.push_back(Light{ /*pos*/{4,1,6}, /*color*/{1,1,1}, /*intensity*/80.0 });
         }
-        // your stronger tweak
-        for (auto& L : lights) {
-            L.intensity = 150.0;
-        }
+        
 
         // ---------- 3) Instantiate shapes ----------
         std::vector<Shape*> shapes;
@@ -232,8 +233,10 @@ int main(){
             owned.push_back(std::move(pl));
         }
 
-        MaterialDB mats;
+        
+        /*
 
+        MaterialDB mats;
         // Plane (id 50)
         mats.by_id[50] = Material{
             .kd={0.7,0.7,0.75}, .ks={0.1,0.1,0.1}, .shininess=32, .reflectivity=0.05
@@ -254,6 +257,42 @@ int main(){
             .kd={0.02,0.02,0.03}, .ks={1,1,1}, .shininess=256,
             .reflectivity=0.05, .transparency=0.95, .ior=1.5
         };
+        */
+
+        MaterialDB mats;
+
+        // Plane (id 50)
+        if (havePlane) {
+            mats.by_id[50] = Material{
+                .kd = pln.color,
+                .ks = {0.1,0.1,0.1},
+                .shininess = 32,
+                .reflectivity = 0.05
+            };
+        }
+
+        // Cubes
+        for (size_t i = 0; i < cubes.size(); ++i) {
+            int id = int(100 + i);
+            mats.by_id[id] = Material{
+                .kd = cubes[i].color,
+                .ks = {0.2,0.2,0.2},
+                .shininess = 64,
+                .reflectivity = 0.0
+            };
+        }
+
+        // Spheres
+        for (size_t i = 0; i < spheres.size(); ++i) {
+            int id = int(200 + i);
+            mats.by_id[id] = Material{
+                .kd = spheres[i].color,
+                .ks = {0.3,0.3,0.3},
+                .shininess = 128
+                // set reflectivity/transparency per your needs, or leave as purely diffuse
+            };
+        }
+
 
 
         // ---------- 4) Build BVH ----------
@@ -303,7 +342,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/render1.ppm";
+        const std::string outPath = "../Output/render2.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 
