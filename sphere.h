@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <string>
@@ -29,6 +28,7 @@ private:
     float m_px, m_py, m_pz;   // position
     float m_sx, m_sy, m_sz;   // scale (non-uniform → ellipsoid)
 };
+
 
 
 

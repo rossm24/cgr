@@ -9,6 +9,7 @@
 #include <cmath>
 #include <chrono>
 #include <limits>
+#include <random>
 
 #include "camera.h"     // Vec3, Ray, Camera
 #include "image_ppm.h"
@@ -82,6 +83,13 @@ static Vec3 shade_diffuse(const Hit& hit, const Vec3& lightPos, double lightInte
     c.z += 0.02 * albedo.z;
     return c;
 }
+
+struct RNG {
+    std::mt19937 gen;
+    std::uniform_real_distribution<double> U{0.0, 1.0};
+    RNG(uint32_t seed=1337) : gen(seed) {}
+    inline double next() { return U(gen); }
+};
 
 
 
@@ -190,7 +198,7 @@ int main(){
             owned.push_back(std::move(cb));
         }
 
-        // Spheres — create using the NEW ctor (name + 6 floats)
+        // --- Spheres: unit-sphere geometry driven entirely by the transform ---
         for (size_t i = 0; i < spheres.size(); ++i) {
             const auto& S = spheres[i];
 
@@ -214,6 +222,7 @@ int main(){
             shapes.push_back(sp.get());
             owned.push_back(std::move(sp));
         }
+
 
         // Plane — create with 4 corners like your friend's
         if (havePlane) {
@@ -323,19 +332,66 @@ int main(){
         params.maxDepth = 6;
         params.eps = 1e-4;
 
-        for(int y=0;y<H;++y){
-            for(int x=0;x<W;++x){
-                Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
+        int spp = 4; // samples per pixel
+        bool stratified = true;
+        RNG rng(12345);
 
-                Vec3 c = shadeRay(ray, 0, scene, lights, mats, params);
+        for (int y = 0; y < H; ++y){
+            for (int x = 0; x < W; ++x){
+                Vec3 accum{0,0,0};
 
-                // write to image
+                if (stratified) {
+                    int n = (int)std::floor(std::sqrt((double)spp) + 0.5);
+                    if (n*n != spp) n = 0; // fall back to pure jitter if spp not square
+
+                    if (n > 0) {
+                        // n x n stratified jitter
+                        for (int j = 0; j < n; ++j){
+                            for (int i = 0; i < n; ++i){
+                                double u = (i + rng.next()) / n;  // in [0,1)
+                                double v = (j + rng.next()) / n;  // in [0,1)
+                                // If rayFromPixel expects pixel *corners*, sample at x+u,y+v.
+                                // If it expects *centers*, change to (x + (u - 0.5)), etc.
+                                Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                                Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                                accum += c;
+                            }
+                        }
+                        accum /= double(spp);
+                    } else {
+                        // pure jitter (spp not a perfect square)
+                        for (int s = 0; s < spp; ++s){
+                            double u = rng.next(); // [0,1)
+                            double v = rng.next(); // [0,1)
+                            Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                            Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                            accum += c;
+                        }
+                        accum /= double(spp);
+                    }
+                } else {
+                    // plain jittered supersampling
+                    for (int s = 0; s < spp; ++s){
+                        double u = rng.next(); // [0,1)
+                        double v = rng.next(); // [0,1)
+                        Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                        Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                        accum += c;
+                    }
+                    accum /= double(spp);
+                }
+
+                // (Optional) gamma correction — uncomment if you want nicer mid-tones
+                auto gc = [](double a){ return std::pow(std::clamp(a,0.0,1.0), 1.0/2.2); };
+                Vec3 out = { gc(accum.x), gc(accum.y), gc(accum.z) };
+
                 img.set(x, y,
-                        Pixel(clamp8(c.x * 255.0),
-                              clamp8(c.y * 255.0),
-                              clamp8(c.z * 255.0)));
+                        Pixel(clamp8(out.x * 255.0),
+                            clamp8(out.y * 255.0),
+                            clamp8(out.z * 255.0)));
             }
         }
+
 
         auto t1 = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -377,6 +433,46 @@ for(int y=0;y<H;++y){
 */
 
 
+/*
+for(int y=0;y<H;++y){
+            for(int x=0;x<W;++x){
+                Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
 
+                Vec3 c = shadeRay(ray, 0, scene, lights, mats, params);
+
+                // write to image
+                img.set(x, y,
+                        Pixel(clamp8(c.x * 255.0),
+                              clamp8(c.y * 255.0),
+                              clamp8(c.z * 255.0)));
+            }
+        }
+*/
+
+/*
+for (size_t i = 0; i < spheres.size(); ++i) {
+            const auto& S = spheres[i];
+
+            auto sp = std::make_unique<Sphere>(
+                "sphere_" + std::to_string(i),
+                (float)S.center.x, (float)S.center.y, (float)S.center.z,
+                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z
+            );
+            sp->id = int(200 + i);
+
+            // NOTE: our new Sphere already uses its own pos/scale in intersect,
+            // so we don't *have* to call setTransform here.
+            // If you want rotations from Blender to apply, you *could* do:
+            //
+            // Mat4 T = composeTRS(S.center, S.euler, S.scale);
+            // sp->setTransform(T);
+            //
+            // but then you'd be mixing "internal float scale" and "matrix scale".
+            // Let's keep it clean and skip transform for spheres for now.
+
+            shapes.push_back(sp.get());
+            owned.push_back(std::move(sp));
+        }
+*/
 
 

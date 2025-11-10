@@ -43,6 +43,19 @@ void Sphere::print_info() const {
               << "  scale: (" << m_sx << ", " << m_sy << ", " << m_sz << ")\n\n";
 }
 
+
+
+
+
+AABB Sphere::objectBounds() const
+{
+    // unit sphere in object space
+    return AABB(Vec3(-1.0, -1.0, -1.0),
+                Vec3( 1.0,  1.0,  1.0));
+}
+
+
+
 bool Sphere::intersect(const Ray& worldRay,
                        double tMin,
                        double tMax,
@@ -115,12 +128,4 @@ bool Sphere::intersect(const Ray& worldRay,
     if (try_root(t1)) return true;
     if (try_root(t2)) return true;
     return false;
-}
-
-
-AABB Sphere::objectBounds() const
-{
-    // unit sphere in object space
-    return AABB(Vec3(-1.0, -1.0, -1.0),
-                Vec3( 1.0,  1.0,  1.0));
 }
