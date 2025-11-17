@@ -26,6 +26,16 @@
 #include "scene_accel.h"
 #include "texture_manager.h"
 
+// Blender -> Renderer coordinates
+// Blender: X right, Y forward, Z up
+// Renderer: X right, Y up, Z forward
+static inline Vec3 B2R(const Vec3& pB)
+{
+    // (x, y, z) -> (x, z, -y)
+    //return Vec3{ pB.x, pB.z, -pB.y };
+    return pB;
+}
+
 
 // ---------------- tiny parsing helpers ----------------
 static bool extractVec3(const std::string& line, const std::string& key, Vec3& out){
@@ -123,7 +133,7 @@ static bool extractString(const std::string& line,
 
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scenetest2.txt";
+        const std::string scenePath = "../ASCII/scene2.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -258,31 +268,40 @@ int main(){
         std::vector<Shape*> shapes;
         std::vector<std::unique_ptr<Shape>> owned;
 
-        // Cubes — your cube class already fits your framework
+        // Cubes
         for (size_t i = 0; i < cubes.size(); ++i) {
             auto cb = std::make_unique<Cube>();
             cb->id = int(100 + i);
 
-            Mat4 C = composeTRS(
-                cubes[i].center,
-                cubes[i].euler,
-                {cubes[i].edge, cubes[i].edge, cubes[i].edge}
-            );
+            // ASCII centre (already in renderer coords)
+            Vec3 centerR = B2R(cubes[i].center);   // currently just returns center
+
+            // Euler from ASCII (in radians, XYZ order)
+            Vec3 euler = cubes[i].euler;
+
+            // Uniform scale from scale1d
+            Vec3 scale = { cubes[i].edge, cubes[i].edge, cubes[i].edge };
+
+            // T * R * S (this is correct with your composeTRS + new Mat4)
+            Mat4 C = composeTRS(centerR, euler, scale);
+
+            // --- DEBUG: world-space position of the cube's local origin ---
+            Vec3 worldOrigin = Mat4::mul_point(C, Vec3{0,0,0});
+            std::cout << "Cube " << i
+                    << " center=(" << cubes[i].center.x << ", "
+                                    << cubes[i].center.y << ", "
+                                    << cubes[i].center.z << ")"
+                    << " edge=" << cubes[i].edge
+                    << " worldOrigin=(" << worldOrigin.x << ", "
+                                        << worldOrigin.y << ", "
+                                        << worldOrigin.z << ")\n";
+
 
             cb->setTransform(C);
-
-            // NEW: texture hookup
-            if (!cubes[i].texName.empty()) {
-                cb->texName = cubes[i].texName;
-
-                // assumes exe in Code/, textures in ../Textures/
-                std::string fullPath = "../Textures/" + cb->texName;
-                cb->texture = texMgr.get(fullPath);
-            }
-
-
             shapes.push_back(cb.get());
             owned.push_back(std::move(cb));
+
+            //if (i==5) break;
         }
 
         // --- Spheres: unit-sphere geometry driven entirely by the transform ---
@@ -493,7 +512,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/rendertest2.ppm";
+        const std::string outPath = "../Output/rendertest1.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 
@@ -505,6 +524,37 @@ int main(){
 }
 
 /*
+
+// Cubes — your cube class already fits your framework
+        for (size_t i = 0; i < cubes.size(); ++i) {
+            auto cb = std::make_unique<Cube>();
+            cb->id = int(100 + i);
+
+            Mat4 C = composeTRS(
+                cubes[i].center,
+                cubes[i].euler,
+                {cubes[i].edge, cubes[i].edge, cubes[i].edge}
+            );
+
+            cb->setTransform(C);
+
+            // NEW: texture hookup
+            if (!cubes[i].texName.empty()) {
+                cb->texName = cubes[i].texName;
+
+                // assumes exe in Code/, textures in ../Textures/
+                std::string fullPath = "../Textures/" + cb->texName;
+                cb->texture = texMgr.get(fullPath);
+            }
+
+
+            shapes.push_back(cb.get());
+            owned.push_back(std::move(cb));
+        }
+
+
+
+
 for(int y=0;y<H;++y){
             for(int x=0;x<W;++x){
                 Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized

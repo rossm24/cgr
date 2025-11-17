@@ -4,7 +4,12 @@
 
 struct Mat4 {
     // Row-major
-    double m[16]{};
+    double m[16];
+
+    // Constructors
+    Mat4() {
+        for (int i = 0; i < 16; ++i) m[i] = 0.0;
+    }
 
     static Mat4 identity();
     static Mat4 translate(const Vec3& t);
