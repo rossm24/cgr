@@ -1,5 +1,6 @@
 #include "camera.h"
 #include <algorithm>
+#include <iostream>
 
 // ---------- small file & string utils ----------
 
@@ -45,6 +46,108 @@ static bool findKeyOpenParen(const std::string& line, const std::string& key, si
     k += needle.size();
     return true;
 }
+
+// Build camera basis from Blender-style Euler XYZ rotation.
+// Uses the same convention as your eulerXYZ_to_R: R = Rz * Ry * Rx.
+// In Blender camera local space we assume:
+//   forward_local = (0, 1, 0)
+//   up_local      = (0, 0, 1)
+//   right_local   = (1, 0, 0)
+static void basisFromEulerXYZ(const Vec3& rot,
+                              Vec3& forward,
+                              Vec3& up,
+                              Vec3& right)
+{
+    double rx = rot.x;
+    double ry = rot.y;
+    double rz = rot.z;
+
+    double cx = std::cos(rx), sx = std::sin(rx);
+    double cy = std::cos(ry), sy = std::sin(ry);
+    double cz = std::cos(rz), sz = std::sin(rz);
+
+    // Rotation matrices
+    // Rx
+    double Rx00 = 1,  Rx01 = 0,   Rx02 = 0;
+    double Rx10 = 0,  Rx11 = cx,  Rx12 = -sx;
+    double Rx20 = 0,  Rx21 = sx,  Rx22 = cx;
+
+    // Ry
+    double Ry00 = cy,  Ry01 = 0,  Ry02 = sy;
+    double Ry10 = 0,   Ry11 = 1,  Ry12 = 0;
+    double Ry20 = -sy, Ry21 = 0,  Ry22 = cy;
+
+    // Rz
+    double Rz00 = cz,  Rz01 = -sz, Rz02 = 0;
+    double Rz10 = sz,  Rz11 = cz,  Rz12 = 0;
+    double Rz20 = 0,   Rz21 = 0,   Rz22 = 1;
+
+    // R = Rz * Ry * Rx
+    auto mul3 = [&](double A00,double A01,double A02,
+                    double A10,double A11,double A12,
+                    double A20,double A21,double A22,
+                    double B00,double B01,double B02,
+                    double B10,double B11,double B12,
+                    double B20,double B21,double B22,
+                    double& C00,double& C01,double& C02,
+                    double& C10,double& C11,double& C12,
+                    double& C20,double& C21,double& C22)
+    {
+        C00 = A00*B00 + A01*B10 + A02*B20;
+        C01 = A00*B01 + A01*B11 + A02*B21;
+        C02 = A00*B02 + A01*B12 + A02*B22;
+
+        C10 = A10*B00 + A11*B10 + A12*B20;
+        C11 = A10*B01 + A11*B11 + A12*B21;
+        C12 = A10*B02 + A11*B12 + A12*B22;
+
+        C20 = A20*B00 + A21*B10 + A22*B20;
+        C21 = A20*B01 + A21*B11 + A22*B21;
+        C22 = A20*B02 + A21*B12 + A22*B22;
+    };
+
+    // Ry * Rx
+    double T00,T01,T02,T10,T11,T12,T20,T21,T22;
+    mul3(Ry00,Ry01,Ry02,
+         Ry10,Ry11,Ry12,
+         Ry20,Ry21,Ry22,
+         Rx00,Rx01,Rx02,
+         Rx10,Rx11,Rx12,
+         Rx20,Rx21,Rx22,
+         T00,T01,T02,
+         T10,T11,T12,
+         T20,T21,T22);
+
+    // R = Rz * (Ry * Rx)
+    double R00,R01,R02,R10,R11,R12,R20,R21,R22;
+    mul3(Rz00,Rz01,Rz02,
+         Rz10,Rz11,Rz12,
+         Rz20,Rz21,Rz22,
+         T00,T01,T02,
+         T10,T11,T12,
+         T20,T21,T22,
+         R00,R01,R02,
+         R10,R11,R12,
+         R20,R21,R22);
+
+    // Local basis in Blender camera space
+    Vec3 fL(0, 1, 0);  // forward
+    Vec3 uL(0, 0, 1);  // up
+    Vec3 rL(1, 0, 0);  // right
+
+    auto applyR = [&](const Vec3& v)->Vec3 {
+        return {
+            R00*v.x + R01*v.y + R02*v.z,
+            R10*v.x + R11*v.y + R12*v.z,
+            R20*v.x + R21*v.y + R22*v.z
+        };
+    };
+
+    forward = normalize(applyR(fL));
+    up      = normalize(applyR(uL));
+    right   = normalize(applyR(rL));
+}
+
 
 bool Camera::extractVec3(const std::string& line, const std::string& key, Vec3& out){
     size_t k;
@@ -158,6 +261,13 @@ void Camera::loadFromSceneTxt(const std::string& path) {
 
         // build the camera basis AFTER we've fixed axes
         buildBasis();
+
+        // DEBUG: print camera basis
+        std::cerr << "[CAM] pos   = (" << position.x << ", " << position.y << ", " << position.z << ")\n";
+        std::cerr << "[CAM] gaze  = (" << forward.x  << ", " << forward.y  << ", " << forward.z  << ")\n";
+        std::cerr << "[CAM] right = (" << right.x    << ", " << right.y    << ", " << right.z    << ")\n";
+        std::cerr << "[CAM] up    = (" << up.x       << ", " << up.y       << ", " << up.z       << ")\n";
+
         return;
     }
 
@@ -189,6 +299,10 @@ Ray Camera::rayFromPixel(float px, float py) const {
 
 
 /*
+
+
+
+
 void Camera::loadFromSceneTxt(const std::string& path){
     std::istringstream ss(readFile(path));
     std::string line;

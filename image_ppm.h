@@ -111,9 +111,11 @@ public:
     // (c) Save to file (.ppm)
     void save(const std::string& filename, bool binary = true) const;
 
+    void load(const std::string& filename);
+
 private:
     int w_{}, h_{};
     std::vector<Pixel> data_;
 
-    void load(const std::string& filename);
+    
 };

@@ -96,15 +96,37 @@ bool Plane::intersect(const Ray& worldRay,
     if (!anyHit)
         return false;
 
-    return commitFromObjectSpace(
-        worldRay,
-        r,
-        bestT,
-        bestN,
-        hit,
-        tMin,
-        tMax
-    );
+    if (!commitFromObjectSpace(
+            worldRay,
+            r,
+            bestT,
+            bestN,
+            hit,
+            tMin,
+            tMax
+        ))
+    {
+        return false;
+    }
+
+    // -------------------
+    // NEW: compute UVs
+    // -------------------
+    // We now have hit.p in world space.
+    // Treat the plane as a tiled floor in XZ.
+    double scale = 0.5; // tweak this to control tile size
+
+    double u = hit.p.x * scale;
+    double v = hit.p.z * scale;
+
+    // Wrap to [0,1)
+    u = u - std::floor(u);
+    v = v - std::floor(v);
+
+    hit.u = u;
+    hit.v = v;
+
+    return true;
 }
 
 AABB Plane::objectBounds() const

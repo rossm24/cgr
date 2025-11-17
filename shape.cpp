@@ -33,6 +33,9 @@ bool Shape::commitFromObjectSpace(const Ray& worldRay,
     hit.p = p_w;
     hit.n = n_w;
     hit.shape_id = id;
+
+    hit.shape = this;
+
     return true;
 }
 

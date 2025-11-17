@@ -26,6 +26,127 @@ static inline bool bvhOccluded(const BVH& bvh, const Ray& r, double tMin, double
     return bvh.intersect(r, tMin, tMax, h);
 }
 
+static Vec3 shadeHit(const Ray& ray,
+                     const Hit& hit,
+                     const std::vector<Light>& lights,
+                     const MaterialDB& mats)
+{
+    if (hit.shape_id < 0) {
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    Vec3 kd  = {0.8, 0.2, 0.2};
+    Vec3 ks  = {0.0, 0.0, 0.0};
+    double shininess = 32.0;
+
+    if (auto it = mats.by_id.find(hit.shape_id); it != mats.by_id.end()) {
+        kd        = it->second.kd;
+        ks        = it->second.ks;
+        shininess = it->second.shininess;
+    }
+
+    // TEXTURE OVERRIDE
+    const Shape* sh = hit.shape;
+    if (sh && sh->texture) {
+        Vec3 texCol = sh->texture->sample(hit.u, hit.v);
+        kd = texCol;  // or kd *= texCol;
+    }
+
+    Vec3 N = hit.n;
+    Vec3 V = normalize(-ray.dir);
+
+    Vec3 color{0.0, 0.0, 0.0};
+    Vec3 ambient = 0.05 * kd;
+
+    for (const Light& L : lights) {
+        Vec3 Ldir = normalize(L.pos - hit.p);
+        double NdotL = std::max(0.0, dot(N, Ldir));
+
+        Vec3 diff = kd * (L.intensity * NdotL);
+
+        Vec3 H = normalize(Ldir + V);
+        double NdotH = std::max(0.0, dot(N, H));
+        Vec3 spec = ks * (L.intensity * std::pow(NdotH, shininess));
+
+        color += diff + spec;
+    }
+
+    color += ambient;
+
+    color.x = std::min(1.0, std::max(0.0, color.x));
+    color.y = std::min(1.0, std::max(0.0, color.y));
+    color.z = std::min(1.0, std::max(0.0, color.z));
+
+    return color;
+}
+
+Vec3 shadeRay(const Ray& ray,
+              int depth,
+              const SceneAccel& scene,
+              const std::vector<Light>& lights,
+              const MaterialDB& mats,
+              const RenderParams& params)
+{
+    if (depth > params.maxDepth) {
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    Hit hit;
+    const double tMin = params.eps;
+    const double tMax = std::numeric_limits<double>::infinity();
+
+    if (!scene.intersect(ray, tMin, tMax, hit)) {
+        // Background colour (same as your ImagePPM background or a gradient)
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    // Look up material
+    const Material* mat = nullptr;
+    if (auto it = mats.by_id.find(hit.shape_id); it != mats.by_id.end()) {
+        mat = &it->second;
+    }
+
+    double reflectivity = mat ? mat->reflectivity : 0.0;
+    double transparency = mat ? mat->transparency : 0.0;
+    double ior          = mat ? mat->ior          : 1.0;
+
+    // Local shading (diffuse + spec + texture) using shadeHit
+    Vec3 localColor = shadeHit(ray, hit, lights, mats);
+
+    Vec3 finalColor = localColor;
+
+    // Reflection
+    if (reflectivity > 0.0 && depth < params.maxDepth) {
+        Vec3 N = hit.n;
+        Vec3 Rdir = reflect(ray.dir, N);
+        Ray reflRay{ hit.p + params.eps * Rdir, Rdir };
+
+        Vec3 reflCol = shadeRay(reflRay, depth + 1, scene, lights, mats, params);
+
+        finalColor = (1.0 - reflectivity) * finalColor + reflectivity * reflCol;
+    }
+
+    // Refraction (if you used it in Module 2; otherwise you can skip this block)
+    if (transparency > 0.0 && depth < params.maxDepth) {
+        Vec3 N = hit.n;
+        Vec3 Tdir;
+        if (refract(ray.dir, N, ior, Tdir)) {
+            Ray refrRay{ hit.p + params.eps * Tdir, Tdir };
+            Vec3 refrCol = shadeRay(refrRay, depth + 1, scene, lights, mats, params);
+            finalColor = (1.0 - transparency) * finalColor + transparency * refrCol;
+        }
+    }
+
+    // Clamp
+    finalColor.x = std::min(1.0, std::max(0.0, finalColor.x));
+    finalColor.y = std::min(1.0, std::max(0.0, finalColor.y));
+    finalColor.z = std::min(1.0, std::max(0.0, finalColor.z));
+
+    return finalColor;
+}
+
+
+/*
 Vec3 shadeRay(const Ray& ray,
               int depth,
               const SceneAccel& scene,
@@ -117,3 +238,5 @@ Vec3 shadeRay(const Ray& ray,
 
     return Kl * Lo + Kr * Lr + Kt * Lt;
 }
+
+*/

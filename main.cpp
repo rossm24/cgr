@@ -24,6 +24,7 @@
 #include "material_db.h"
 #include "shade.h"
 #include "scene_accel.h"
+#include "texture_manager.h"
 
 
 // ---------------- tiny parsing helpers ----------------
@@ -91,12 +92,38 @@ struct RNG {
     inline double next() { return U(gen); }
 };
 
+static bool extractString(const std::string& line,
+                          const std::string& key,
+                          std::string& out)
+{
+    std::string k = key + "=";
+    size_t p = line.find(k);
+    if (p == std::string::npos) return false;
+    p += k.size();
+
+    // quoted string?
+    if (line[p] == '"') {
+        size_t q = line.find('"', p+1);
+        if (q == std::string::npos) return false;
+        out = line.substr(p+1, q - (p+1));
+        return true;
+    }
+
+    // unquoted fallback
+    size_t q = p;
+    while (q < line.size() && !isspace(line[q])) q++;
+    out = line.substr(p, q - p);
+    return true;
+}
+
+
+
 
 
 
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scene2.txt";
+        const std::string scenePath = "../ASCII/scenetest2.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -108,11 +135,12 @@ int main(){
         // struct Light { Vec3 pos{}; double intensity=0.0; };
         std::vector<Light> lights;
 
-        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color{0.8,0.8,0.8}; };
-        struct SphereAscii{ Vec3 center{}; Vec3 euler{}; Vec3 scale{1,1,1}; double radius=1.0; Vec3 color{0.8,0.8,0.8}; };
+        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color{0.8,0.8,0.8}; std::string texName;};
+        struct SphereAscii{ std::string name; Vec3 center; Vec3 euler; Vec3 scale; double radius; Vec3 color; std::string texName; };
         struct PlaneAscii {
             Vec3 c0{}, c1{}, c2{}, c3{};
             Vec3 color{0.8,0.8,0.8};
+            std::string texName;
         };
 
         std::vector<CubeAscii>   cubes;
@@ -147,17 +175,24 @@ int main(){
                 if (!extractNumber(line, "scale1d", s1))
                     throw std::runtime_error("CUB: scale1d missing");
                 C.edge = s1;
+
+                extractString(line, "tex", C.texName);
+
                 cubes.push_back(C);
             }
             else if (line.rfind("SPH ", 0) == 0) {
                 SphereAscii S{};
                 if (!extractVec3(line, "loc", S.center))
                     throw std::runtime_error("SPH: loc missing");
+                extractString(line, "name", S.name);
                 extractVec3(line, "rot",   S.euler);
                 extractVec3(line, "scale", S.scale);
                 extractVec3(line, "color", S.color);
                 if (!extractNumber(line, "radius", S.radius))
                     throw std::runtime_error("SPH: radius missing");
+
+                extractString(line, "tex", S.texName);
+
                 spheres.push_back(S);
             }
             else if (line.rfind("PLN ", 0) == 0) {
@@ -166,6 +201,8 @@ int main(){
             if (!extractVec3(line, "c2", pln.c2)) throw std::runtime_error("PLN: c2 missing");
             if (!extractVec3(line, "c3", pln.c3)) throw std::runtime_error("PLN: c3 missing");
             extractVec3(line, "color", pln.color);
+
+            extractString(line, "tex", pln.texName);    
 
             havePlane = true;
             }
@@ -176,6 +213,45 @@ int main(){
             std::cerr << "[warn] No lights; using a default light.\n";
             lights.push_back(Light{ /*pos*/{4,1,6}, /*color*/{1,1,1}, /*intensity*/80.0 });
         }
+
+        
+
+        // ============================================================
+        // DEBUG: check whether any Blender spheres physically overlap
+        // ============================================================
+        std::cout << "=== Checking for sphere-sphere overlaps ===\n";
+
+        for (size_t i = 0; i < spheres.size(); ++i) {
+            for (size_t j = i + 1; j < spheres.size(); ++j) {
+
+                const auto& A = spheres[i];
+                const auto& B = spheres[j];
+
+                // distance between centres
+                Vec3 d = A.center - B.center;
+                double dist = std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+
+                // crude “radius” = max axis (consistent with your C++ ellipsoid)
+                double rA = std::max({ std::fabs(A.scale.x),
+                                    std::fabs(A.scale.y),
+                                    std::fabs(A.scale.z) });
+
+                double rB = std::max({ std::fabs(B.scale.x),
+                                    std::fabs(B.scale.y),
+                                    std::fabs(B.scale.z) });
+
+                if (dist < rA + rB) {
+                    std::cout << "Overlap: SPH[" << i << "] and SPH[" << j << "] "
+                            << "dist=" << dist
+                            << " < rA+rB=" << (rA + rB) << "\n";
+                }
+            }
+        }
+
+        std::cout << "=== End of overlap test ===\n";
+
+        TextureManager texMgr;
+
         
 
         // ---------- 3) Instantiate shapes ----------
@@ -194,6 +270,17 @@ int main(){
             );
 
             cb->setTransform(C);
+
+            // NEW: texture hookup
+            if (!cubes[i].texName.empty()) {
+                cb->texName = cubes[i].texName;
+
+                // assumes exe in Code/, textures in ../Textures/
+                std::string fullPath = "../Textures/" + cb->texName;
+                cb->texture = texMgr.get(fullPath);
+            }
+
+
             shapes.push_back(cb.get());
             owned.push_back(std::move(cb));
         }
@@ -203,25 +290,29 @@ int main(){
             const auto& S = spheres[i];
 
             auto sp = std::make_unique<Sphere>(
-                "sphere_" + std::to_string(i),
+                S.name,
                 (float)S.center.x, (float)S.center.y, (float)S.center.z,
-                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z
+                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z,  
+                (float)S.euler.x,  (float)S.euler.y,  (float)S.euler.z
             );
             sp->id = int(200 + i);
 
-            // NOTE: our new Sphere already uses its own pos/scale in intersect,
-            // so we don't *have* to call setTransform here.
-            // If you want rotations from Blender to apply, you *could* do:
-            //
-            // Mat4 T = composeTRS(S.center, S.euler, S.scale);
-            // sp->setTransform(T);
-            //
-            // but then you'd be mixing "internal float scale" and "matrix scale".
-            // Let's keep it clean and skip transform for spheres for now.
+            // NEW: texture hookup
+            if (!S.texName.empty()) {
+                sp->texName = S.texName;
+                std::string fullPath = "../Textures/" + sp->texName;
+                sp->texture = texMgr.get(fullPath);
+            }
 
             shapes.push_back(sp.get());
             owned.push_back(std::move(sp));
+
+            std::cerr << "[SPH] " << S.name << " center=("
+                << S.center.x << ", " << S.center.y << ", " << S.center.z << ") "
+                << "scale=("
+                << S.scale.x  << ", " << S.scale.y  << ", " << S.scale.z  << ")\n";
         }
+
 
 
         // Plane — create with 4 corners like your friend's
@@ -235,8 +326,10 @@ int main(){
             );
             pl->id = 50;
 
-            // we can leave the transform as identity — the corners are already in object space
-            // if later you want to move/rotate it, call pl->setTransform(...)
+            if (!pln.texName.empty()) {
+                pl->texName = pln.texName;
+                pl->texture = texMgr.get("../Textures/" + pl->texName);
+            }
 
             shapes.push_back(pl.get());
             owned.push_back(std::move(pl));
@@ -301,6 +394,8 @@ int main(){
                 // set reflectivity/transparency per your needs, or leave as purely diffuse
             };
         }
+
+        
 
 
 
@@ -398,7 +493,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/render2.ppm";
+        const std::string outPath = "../Output/rendertest2.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 

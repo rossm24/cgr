@@ -3,6 +3,7 @@
 #include "mat4.h"
 #include "hit.h"
 #include "aabb.h"
+#include "texture.h"
 
 class Shape {
 public:
@@ -10,6 +11,9 @@ public:
 
     // public id (optional)
     int id = -1;
+
+    Texture* texture = nullptr; // optional texture
+    std::string texName; // e.g. "x.ppm" from scene.txt
 
     // set/get transforms
     void setTransform(const Mat4& localToWorld);

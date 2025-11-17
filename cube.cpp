@@ -53,5 +53,67 @@ bool Cube::intersect(const Ray& worldRay, double tMin, double tMax, Hit& hit) co
     else                          n_obj = { 0, 0, (p_obj.z>0)? +1.0 : -1.0 };
 
     // finalize (handles world tMin/tMax and closest hit logic)
-    return commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax);
+    if (!commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax))
+        return false;
+
+    // -------------------
+    // NEW: compute UVs
+    // -------------------
+    double u = 0.0, v = 0.0;
+
+    ax = std::abs(n_obj.x);
+    ay = std::abs(n_obj.y);
+    az = std::abs(n_obj.z);
+
+    // Our cube is [-0.5, 0.5]^3 in object space.
+    // Map the two in-face coordinates from [-0.5,0.5] -> [0,1].
+    if (ax >= ay && ax >= az) {
+        // ±X faces
+        if (n_obj.x > 0) {
+            // +X
+            u = 0.5 + p_obj.z;   // z -> u
+            v = 0.5 + p_obj.y;   // y -> v
+        } else {
+            // -X (flip u so the texture isn't mirrored oddly)
+            u = 0.5 - p_obj.z;
+            v = 0.5 + p_obj.y;
+        }
+    } else if (ay >= ax && ay >= az) {
+        // ±Y faces (top/bottom)
+        if (n_obj.y > 0) {
+            // +Y (top)
+            u = 0.5 + p_obj.x;   // x -> u
+            v = 0.5 - p_obj.z;   // z -> v
+        } else {
+            // -Y (bottom)
+            u = 0.5 + p_obj.x;
+            v = 0.5 + p_obj.z;
+        }
+    } else {
+        // ±Z faces
+        if (n_obj.z > 0) {
+            // +Z
+            u = 0.5 + p_obj.x;   // x -> u
+            v = 0.5 + p_obj.y;   // y -> v
+        } else {
+            // -Z
+            u = 0.5 - p_obj.x;
+            v = 0.5 + p_obj.y;
+        }
+    }
+
+    // Clamp to [0,1] just in case of tiny numeric drift
+    u = std::clamp(u, 0.0, 1.0);
+    v = std::clamp(v, 0.0, 1.0);
+
+    hit.u = u;
+    hit.v = v;
+
+    return true;
 }
+
+
+/*
+// finalize (handles world tMin/tMax and closest hit logic)
+    return commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax);
+*/
