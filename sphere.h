@@ -47,7 +47,11 @@ public:
 
     void print_info() const;
 
-    AABB objectBounds() const override;
+    AABB objectBounds() const override {
+        // unit sphere in object space
+        return AABB(Vec3(-1.0, -1.0, -1.0),
+                    Vec3( 1.0,  1.0,  1.0));
+    }
 
     bool intersect(const Ray& worldRay,
                    double tMin,

@@ -378,6 +378,14 @@ int main(){
             .kd={0.02,0.02,0.03}, .ks={1,1,1}, .shininess=256,
             .reflectivity=0.05, .transparency=0.95, .ior=1.5
         };
+
+
+        auto sp = std::make_unique<Sphere>(
+                S.name,
+                (float)S.center.x, (float)S.center.y, (float)S.center.z,
+                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z,  
+                (float)S.euler.x,  (float)S.euler.y,  (float)S.euler.z
+            );
         */
 
         MaterialDB mats;
