@@ -11,7 +11,7 @@ public:
         if (it != texs.end()) return it->second.get();
 
         auto tex = std::make_unique<Texture>();
-        if (!tex->load(path)) {
+        if (!tex->loadPPM(path)) {
             // failed to load; you might want a debug print
             return nullptr;
         }

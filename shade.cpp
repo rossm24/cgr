@@ -35,8 +35,11 @@ static Vec3 shadeHit(const Ray& ray,
         return Vec3{0.0, 0.0, 0.0};
     }
 
-    Vec3 kd  = {0.8, 0.2, 0.2};
-    Vec3 ks  = {0.0, 0.0, 0.0};
+    // -----------------------
+    // 1. Base material (kd, ks, shininess)
+    // -----------------------
+    Vec3  kd        = {0.8, 0.2, 0.2};   // fallback diffuse
+    Vec3  ks        = {0.1, 0.1, 0.1};   // small specular
     double shininess = 32.0;
 
     if (auto it = mats.by_id.find(hit.shape_id); it != mats.by_id.end()) {
@@ -45,40 +48,75 @@ static Vec3 shadeHit(const Ray& ray,
         shininess = it->second.shininess;
     }
 
-    // TEXTURE OVERRIDE
+    // -----------------------
+    // 2. Texture modulation (like Blender "Multiply", but tamed)
+    // -----------------------
     const Shape* sh = hit.shape;
     if (sh && sh->texture) {
         Vec3 texCol = sh->texture->sample(hit.u, hit.v);
-        kd = texCol;  // or kd *= texCol;
+
+        // Save base kd so we can blend
+        Vec3 baseKd = kd;
+
+        // First do a straight multiply (classic texture modulate)
+        kd.x *= texCol.x;
+        kd.y *= texCol.y;
+        kd.z *= texCol.z;
+
+        // Then blend between base colour and multiplied colour so it
+        // doesn't blow out. texStrength in [0,1].
+        const double texStrength = 0.9;
+        kd.x = (1.0 - texStrength) * baseKd.x + texStrength * kd.x;
+        kd.y = (1.0 - texStrength) * baseKd.y + texStrength * kd.y;
+        kd.z = (1.0 - texStrength) * baseKd.z + texStrength * kd.z;
     }
 
-    Vec3 N = hit.n;
+    // Slightly reduce specular overall so highlights don’t saturate
+    ks = ks * 0.3;
+
+    // -----------------------
+    // 3. Blinn-Phong lighting
+    // -----------------------
+    Vec3 N = normalize(hit.n);
     Vec3 V = normalize(-ray.dir);
 
     Vec3 color{0.0, 0.0, 0.0};
+
+    // Small ambient term to avoid pure black
     Vec3 ambient = 0.05 * kd;
+
+    // Global light scale: your exported intensities are quite large
+    const double lightScale = 0.02;
 
     for (const Light& L : lights) {
         Vec3 Ldir = normalize(L.pos - hit.p);
         double NdotL = std::max(0.0, dot(N, Ldir));
+        if (NdotL <= 0.0) continue;
 
-        Vec3 diff = kd * (L.intensity * NdotL);
+        // Diffuse
+        Vec3 diff = kd * (lightScale * L.intensity * NdotL);
 
+        // Blinn-Phong specular
         Vec3 H = normalize(Ldir + V);
         double NdotH = std::max(0.0, dot(N, H));
-        Vec3 spec = ks * (L.intensity * std::pow(NdotH, shininess));
+        double specTerm = std::pow(NdotH, shininess);
+        Vec3 spec = ks * (lightScale * L.intensity * specTerm);
 
         color += diff + spec;
     }
 
     color += ambient;
 
+    // -----------------------
+    // 4. Clamp to [0,1]
+    // -----------------------
     color.x = std::min(1.0, std::max(0.0, color.x));
     color.y = std::min(1.0, std::max(0.0, color.y));
     color.z = std::min(1.0, std::max(0.0, color.z));
 
     return color;
 }
+
 
 Vec3 shadeRay(const Ray& ray,
               int depth,

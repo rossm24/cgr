@@ -131,9 +131,10 @@ static bool extractString(const std::string& line,
 
 
 
+
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scene2.txt";
+        const std::string scenePath = "../ASCII/scenetest22.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -145,7 +146,7 @@ int main(){
         // struct Light { Vec3 pos{}; double intensity=0.0; };
         std::vector<Light> lights;
 
-        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color{0.8,0.8,0.8}; std::string texName;};
+        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color; std::string texName;};
         struct SphereAscii{ std::string name; Vec3 center; Vec3 euler; Vec3 scale; double radius; Vec3 color; std::string texName; };
         struct PlaneAscii {
             Vec3 c0{}, c1{}, c2{}, c3{};
@@ -295,6 +296,14 @@ int main(){
                     << " worldOrigin=(" << worldOrigin.x << ", "
                                         << worldOrigin.y << ", "
                                         << worldOrigin.z << ")\n";
+
+            // ---- NEW: attach texture if present ----
+            // NEW: texture hookup
+            if (!cubes[i].texName.empty()) {
+                cb->texName = cubes[i].texName;
+                std::string fullPath = "../Textures/" + cb->texName;
+                cb->texture = texMgr.get(fullPath);
+            }                          
 
 
             cb->setTransform(C);
@@ -520,7 +529,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/rendertest1.ppm";
+        const std::string outPath = "../Output/rendertest22.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 
@@ -531,101 +540,6 @@ int main(){
     return 0;
 }
 
-/*
 
-// Cubes — your cube class already fits your framework
-        for (size_t i = 0; i < cubes.size(); ++i) {
-            auto cb = std::make_unique<Cube>();
-            cb->id = int(100 + i);
-
-            Mat4 C = composeTRS(
-                cubes[i].center,
-                cubes[i].euler,
-                {cubes[i].edge, cubes[i].edge, cubes[i].edge}
-            );
-
-            cb->setTransform(C);
-
-            // NEW: texture hookup
-            if (!cubes[i].texName.empty()) {
-                cb->texName = cubes[i].texName;
-
-                // assumes exe in Code/, textures in ../Textures/
-                std::string fullPath = "../Textures/" + cb->texName;
-                cb->texture = texMgr.get(fullPath);
-            }
-
-
-            shapes.push_back(cb.get());
-            owned.push_back(std::move(cb));
-        }
-
-
-
-
-for(int y=0;y<H;++y){
-            for(int x=0;x<W;++x){
-                Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
-
-                Hit best;
-                bool any=false;
-
-                // finite via BVH
-                any |= bvh.intersect(ray, 1e-5, 1e9, best);
-                // infinite (if any)
-                for(Shape* s : infiniteShapes)
-                    any |= s->intersect(ray, 1e-5, 1e9, best);
-
-                if(any){
-                    const auto& L = lights[0];
-                    Vec3 c = shade_diffuse(best, L.pos, L.intensity, white);
-                    img.set(x, y, Pixel(clamp8(c.x*255.0), clamp8(c.y*255.0), clamp8(c.z*255.0)));
-                }
-            }
-        }
-*/
-
-
-/*
-for(int y=0;y<H;++y){
-            for(int x=0;x<W;++x){
-                Ray ray = cam.rayFromPixel((float)x, (float)y); // dir normalized
-
-                Vec3 c = shadeRay(ray, 0, scene, lights, mats, params);
-
-                // write to image
-                img.set(x, y,
-                        Pixel(clamp8(c.x * 255.0),
-                              clamp8(c.y * 255.0),
-                              clamp8(c.z * 255.0)));
-            }
-        }
-*/
-
-/*
-for (size_t i = 0; i < spheres.size(); ++i) {
-            const auto& S = spheres[i];
-
-            auto sp = std::make_unique<Sphere>(
-                "sphere_" + std::to_string(i),
-                (float)S.center.x, (float)S.center.y, (float)S.center.z,
-                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z
-            );
-            sp->id = int(200 + i);
-
-            // NOTE: our new Sphere already uses its own pos/scale in intersect,
-            // so we don't *have* to call setTransform here.
-            // If you want rotations from Blender to apply, you *could* do:
-            //
-            // Mat4 T = composeTRS(S.center, S.euler, S.scale);
-            // sp->setTransform(T);
-            //
-            // but then you'd be mixing "internal float scale" and "matrix scale".
-            // Let's keep it clean and skip transform for spheres for now.
-
-            shapes.push_back(sp.get());
-            owned.push_back(std::move(sp));
-        }
-*/
 
 

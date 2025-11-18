@@ -53,8 +53,8 @@ bool Cube::intersect(const Ray& worldRay, double tMin, double tMax, Hit& hit) co
     else                          n_obj = { 0, 0, (p_obj.z>0)? +1.0 : -1.0 };
 
     // finalize (handles world tMin/tMax and closest hit logic)
-    if (!commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax))
-        return false;
+    //if (!commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax))
+        //return false;
 
     // -------------------
     // NEW: compute UVs
@@ -106,8 +106,15 @@ bool Cube::intersect(const Ray& worldRay, double tMin, double tMax, Hit& hit) co
     u = std::clamp(u, 0.0, 1.0);
     v = std::clamp(v, 0.0, 1.0);
 
+    // ---------- hand off to helper to fill world-space hit ----------
+    if (!commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax))
+        return false;
+
+    // now just add UVs; everything else already set correctly
     hit.u = u;
     hit.v = v;
+    hit.shape = this;
+    hit.shape_id = id;
 
     return true;
 }
@@ -116,4 +123,8 @@ bool Cube::intersect(const Ray& worldRay, double tMin, double tMax, Hit& hit) co
 /*
 // finalize (handles world tMin/tMax and closest hit logic)
     return commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax);
+
+
+
+    
 */
