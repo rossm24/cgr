@@ -28,8 +28,10 @@ static inline bool bvhOccluded(const BVH& bvh, const Ray& r, double tMin, double
 
 static Vec3 shadeHit(const Ray& ray,
                      const Hit& hit,
+                     const SceneAccel& scene,
                      const std::vector<Light>& lights,
-                     const MaterialDB& mats)
+                     const MaterialDB& mats,
+                     const RenderParams& params)
 {
     if (hit.shape_id < 0) {
         return Vec3{0.0, 0.0, 0.0};
@@ -90,6 +92,27 @@ static Vec3 shadeHit(const Ray& ray,
 
     for (const Light& L : lights) {
         Vec3 Ldir = normalize(L.pos - hit.p);
+
+        // ---------- SHADOW RAY ----------
+        Ray shadowRay{ hit.p + params.eps * Ldir, Ldir };
+        Hit shadowHit;
+
+        Vec3 toL = L.pos - hit.p;
+        double distToLight = length(toL);   // <--- THIS line is essential
+        //Vec3 Ldir = toL / distToLight;
+
+        bool inShadow = scene.intersect(
+            shadowRay,
+            params.eps,
+            distToLight - params.eps,
+            shadowHit
+        );
+
+        if (inShadow) {
+            continue;   // skip this light contribution
+        }
+
+
         double NdotL = std::max(0.0, dot(N, Ldir));
         if (NdotL <= 0.0) continue;
 
@@ -149,7 +172,7 @@ Vec3 shadeRay(const Ray& ray,
     double ior          = mat ? mat->ior          : 1.0;
 
     // Local shading (diffuse + spec + texture) using shadeHit
-    Vec3 localColor = shadeHit(ray, hit, lights, mats);
+    Vec3 localColor = shadeHit(ray, hit, scene, lights, mats, params);
 
     Vec3 finalColor = localColor;
 
