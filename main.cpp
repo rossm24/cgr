@@ -134,7 +134,7 @@ static bool extractString(const std::string& line,
 
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scenetest22.txt";
+        const std::string scenePath = "../ASCII/scenetest11.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -529,7 +529,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/rendertest22.ppm";
+        const std::string outPath = "../Output/rendertest11.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 
