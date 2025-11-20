@@ -1,27 +1,42 @@
-# Makefile for Raytracer core
+CXX      := g++
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -pedantic
+LDFLAGS  :=
 
-CXX      = g++
-CXXFLAGS = -std=c++17 -O2 -Wall -Wextra
-TARGET   = render
+TARGET   := raytracer
 
-# Object files
-OBJS = main.o camera.o image_ppm.o mat4.o shape.o cube.o sphere.o plane.o bvh.o
+SRCS := \
+    bvh.cpp \
+    camera.cpp \
+    cube.cpp \
+    image_ppm.cpp \
+    main.cpp \
+    mat4.cpp \
+    plane.cpp \
+    shade.cpp \
+    shape.cpp \
+    sphere.cpp \
+    texture.cpp
 
-# Default target
+OBJS := $(SRCS:.cpp=.o)
+
+# Default target: optimised build
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS)
 
-# Pattern rule for .cpp -> .o
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Clean up build files
-clean:
-	rm -f $(OBJS) $(TARGET)
+# Debug build: raytracer_debug (no optimisation, with symbols)
+debug: CXXFLAGS := -std=c++17 -O0 -g -Wall -Wextra -pedantic
+debug: TARGET   := raytracer_debug
+debug: $(TARGET)
 
-# Optional convenience target
-run: $(TARGET)
-	./$(TARGET)
+# Clean up
+clean:
+	rm -f $(OBJS) $(TARGET) raytracer_debug
+
+.PHONY: all debug clean
+
 

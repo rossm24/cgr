@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include "camera.h"
+#include <limits>
 
 
 static inline Vec3 reflect(const Vec3& I, const Vec3& N){
@@ -11,12 +12,27 @@ static inline Vec3 reflect(const Vec3& I, const Vec3& N){
 // I: incident toward surface (pointing from air into surface normal side)
 // N: unit outward normal (will be flipped if ray is inside)
 // eta = n1/n2
-static inline bool refract(const Vec3& I, const Vec3& N, double eta, Vec3& T){
-    double cosi = std::clamp(dot(I, N), -1.0, 1.0);
-    double sin2t = eta*eta * (1.0 - cosi*cosi);
-    if (sin2t > 1.0) return false; // total internal reflection
-    double cost = std::sqrt(std::max(0.0, 1.0 - sin2t));
-    T = eta * (-I) + (eta * cosi - cost) * N;
+static inline bool refract(const Vec3& I, const Vec3& N, double eta, Vec3& T_out)
+{
+    // I: incident direction (towards surface), assumed normalized
+    // N: surface normal, assumed normalized
+    double cosi = -std::max(-1.0, std::min(1.0, dot(I, N)));
+    Vec3 n = N;
+
+    // If we are inside the medium, flip normal and invert eta
+    if (cosi < 0.0) {
+        cosi = -cosi;
+        n    = -N;
+        eta  = 1.0 / eta;
+    }
+
+    double k = 1.0 - eta * eta * (1.0 - cosi * cosi);
+    if (k < 0.0) {
+        // Total internal reflection
+        return false;
+    }
+
+    T_out = eta * I + (eta * cosi - std::sqrt(k)) * n;
     return true;
 }
 
@@ -141,6 +157,106 @@ static Vec3 shadeHit(const Ray& ray,
 }
 
 
+
+
+// assume reflect(...) and refract(...) helpers are already above this
+
+Vec3 shadeRay(const Ray& ray,
+              int depth,
+              const SceneAccel& scene,
+              const std::vector<Light>& lights,
+              const MaterialDB& mats,
+              const RenderParams& params)
+{
+    if (depth > params.maxDepth) {
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    Hit hit;
+    double tMin = params.eps;
+    double tMax = std::numeric_limits<double>::infinity();
+
+    if (!scene.intersect(ray, tMin, tMax, hit)) {
+        // no hit, background
+        return Vec3{0.0, 0.0, 0.0};
+    }
+
+    // ---- Local (direct) shading with your current shadeHit ----
+    Vec3 localColor = shadeHit(ray, hit, scene, lights, mats, params);
+
+    // Get per-shape material
+    const Material& mat = mats.get(hit.shape_id);
+
+    // Map your fields:
+    // - kr/kt (if you ever set them explicitly)
+    // - otherwise use reflectivity/transparency
+    double kr = (mat.kr != 0.0) ? mat.kr : mat.reflectivity;
+    double kt = (mat.kt != 0.0) ? mat.kt : mat.transparency;
+
+    // clamp to [0,1]
+    kr = std::max(0.0, std::min(1.0, kr));
+    kt = std::max(0.0, std::min(1.0, kt));
+
+    double ior = (mat.ior > 0.0) ? mat.ior : 1.0;
+
+    // If nothing reflective/refractive or max depth reached, just return local shading
+    if ((kr <= 0.0 && kt <= 0.0) || depth == params.maxDepth) {
+        return localColor;
+    }
+
+    Vec3 N = normalize(hit.n);
+    Vec3 V = -normalize(ray.dir);  // from surface to eye
+
+    Vec3 result(0.0, 0.0, 0.0);
+
+    // Keep some of the local term (you can tweak this)
+    double baseWeight = std::max(0.0, 1.0 - kr - kt);
+    result += baseWeight * localColor;
+
+    // -------------------
+    // Reflection
+    // -------------------
+    if (kr > 0.0) {
+        Vec3 Rdir = reflect(-V, N);   // incident = -V
+        Rdir = normalize(Rdir);
+
+        Ray reflRay;
+        reflRay.origin = hit.p + params.eps * Rdir;  // small bias
+        reflRay.dir = Rdir;
+
+        Vec3 reflColor = shadeRay(reflRay, depth + 1, scene, lights, mats, params);
+        result += kr * reflColor;
+    }
+
+    // -------------------
+    // Refraction
+    // -------------------
+    if (kt > 0.0 && ior != 1.0) {
+        Vec3 Tdir;
+        bool ok = refract(-V, N, 1.0 / ior, Tdir);  // air -> material
+
+        if (ok) {
+            Tdir = normalize(Tdir);
+
+            Ray refrRay;
+            refrRay.origin = hit.p + params.eps * Tdir;
+            refrRay.dir = Tdir;
+
+            Vec3 refrColor = shadeRay(refrRay, depth + 1, scene, lights, mats, params);
+            result += kt * refrColor;
+        }
+        // else: total internal reflection (reflection already handled above)
+    }
+
+    return result;
+}
+
+
+
+
+
+
+/*
 Vec3 shadeRay(const Ray& ray,
               int depth,
               const SceneAccel& scene,
@@ -204,100 +320,6 @@ Vec3 shadeRay(const Ray& ray,
     finalColor.z = std::min(1.0, std::max(0.0, finalColor.z));
 
     return finalColor;
-}
-
-
-/*
-Vec3 shadeRay(const Ray& ray,
-              int depth,
-              const SceneAccel& scene,
-              const std::vector<Light>& lights,
-              const MaterialDB& mats,
-              const RenderParams& P)
-{
-    Hit hit;
-    if(!scene.intersect(ray, 1e-5, std::numeric_limits<double>::infinity(), hit)){
-        // Background
-        return {0,0,0};
-    }
-
-    // Geometry at hit
-    const Vec3 Pworld = hit.p;
-    Vec3 N = normalize(hit.n);
-    const Vec3 V = normalize(-ray.dir); // toward camera
-
-    // Material by shape_id (no Hit changes needed)
-    const Material& M = mats.get(hit.shape_id);
-
-    // Ensure normal faces against incoming ray for correct reflection/refraction
-    const bool outside = dot(ray.dir, N) < 0.0;
-    Vec3 Nf = outside ? N : -N;
-
-    // --- Local Blinn-Phong ---
-    Vec3 Lo{0,0,0};
-    Lo += 0.15 * M.kd; // ambient
-
-    for(const auto& Lgt : lights){
-        Vec3 Ldir = Lgt.pos - Pworld;
-        double dist2 = dot(Ldir, Ldir);
-        double dist  = std::sqrt(std::max(0.0, dist2));
-        if(dist > 0.0) Ldir /= dist;
-
-        // Shadow test
-        Ray sray{ Pworld + Nf * P.eps, Ldir };
-        if(scene.occluded(sray, 1e-5, dist - 1e-4)) continue;
-
-        double ndotl = std::max(0.0, dot(Nf, Ldir));
-        Vec3 diff = M.kd * ndotl;
-
-        Vec3 H = normalize(Ldir + V);
-        double ndoth = std::max(0.0, dot(Nf, H));
-        Vec3 spec = M.ks * std::pow(ndoth, M.shininess);
-
-        //double att = 1.0 / std::max(1.0, dist2); // simple falloff
-        double att = 1.0;
-        Lo += (diff + spec) * Lgt.color * (Lgt.intensity * att);
-    }
-
-    if (depth >= P.maxDepth) return Lo;
-
-    // --- Secondary (reflection / refraction) ---
-    Vec3 Lr{0,0,0}, Lt{0,0,0};
-
-    if (M.reflectivity > 0.0){
-        Vec3 Rdir = reflect(-V, Nf);
-        Ray rr{ Pworld + Nf * P.eps, normalize(Rdir) };
-        Lr = shadeRay(rr, depth+1, scene, lights, mats, P);
-    }
-
-    if (M.transparency > 0.0){
-        double n1 = outside ? 1.0 : M.ior;
-        double n2 = outside ? M.ior : 1.0;
-        double eta = n1 / n2;
-
-        Vec3 I = -V;
-        Vec3 Tdir;
-        if (refract(I, Nf, eta, Tdir)){
-            // When entering, offset along -Nf (opposite) to avoid self-hit on exit surfaces,
-            // but with single-surface objects either side works; this is robust:
-            Ray tr{ Pworld - Nf * P.eps, normalize(Tdir) };
-            Lt = shadeRay(tr, depth+1, scene, lights, mats, P);
-        }else{
-            // TIR => pure reflection if not already reflective
-            if (M.reflectivity == 0.0){
-                Vec3 Rdir = reflect(-V, Nf);
-                Ray rr{ Pworld + Nf * P.eps, normalize(Rdir) };
-                Lr = shadeRay(rr, depth+1, scene, lights, mats, P);
-            }
-        }
-    }
-
-    // Simple energy split (you can switch to Fresnel later)
-    double Kr = std::clamp(M.reflectivity, 0.0, 1.0);
-    double Kt = std::clamp(M.transparency, 0.0, 1.0);
-    double Kl = std::max(0.0, 1.0 - Kr - Kt);
-
-    return Kl * Lo + Kr * Lr + Kt * Lt;
 }
 
 */

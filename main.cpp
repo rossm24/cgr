@@ -134,7 +134,7 @@ static bool extractString(const std::string& line,
 
 int main(){
     try{
-        const std::string scenePath = "../ASCII/scenetest11.txt";
+        const std::string scenePath = "../ASCII/scenetest33.txt";
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -364,38 +364,6 @@ int main(){
         }
 
         
-        /*
-
-        MaterialDB mats;
-        // Plane (id 50)
-        mats.by_id[50] = Material{
-            .kd={0.7,0.7,0.75}, .ks={0.1,0.1,0.1}, .shininess=32, .reflectivity=0.05
-        };
-
-        // First cube (id 100)
-        mats.by_id[100] = Material{
-            .kd={0.8,0.3,0.3}, .ks={0.2,0.2,0.2}, .shininess=64, .reflectivity=0.0
-        };
-
-        // Second cube (id 101)
-        mats.by_id[101] = Material{
-            .kd={0.3,0.8,0.3}, .ks={0.6,0.6,0.6}, .shininess=128, .reflectivity=0.4
-        };
-
-        // First sphere (id 200)
-        mats.by_id[200] = Material{
-            .kd={0.02,0.02,0.03}, .ks={1,1,1}, .shininess=256,
-            .reflectivity=0.05, .transparency=0.95, .ior=1.5
-        };
-
-
-        auto sp = std::make_unique<Sphere>(
-                S.name,
-                (float)S.center.x, (float)S.center.y, (float)S.center.z,
-                (float)S.scale.x,  (float)S.scale.y,  (float)S.scale.z,  
-                (float)S.euler.x,  (float)S.euler.y,  (float)S.euler.z
-            );
-        */
 
         MaterialDB mats;
 
@@ -426,8 +394,8 @@ int main(){
             mats.by_id[id] = Material{
                 .kd = spheres[i].color,
                 .ks = {0.3,0.3,0.3},
-                .shininess = 128
-                // set reflectivity/transparency per your needs, or leave as purely diffuse
+                .shininess = 128,
+                .reflectivity = 0.4
             };
         }
 
@@ -529,7 +497,7 @@ int main(){
         std::cout << "Render completed in " << ms << " ms.\n";
 
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/rendertest11.ppm";
+        const std::string outPath = "../Output/rendertest33.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 

@@ -26,6 +26,10 @@ struct Material {
     Vec3 ks;  // specular
     double shininess;
 
+    double kr = 0.0;  
+    double kt = 0.0;
+    
+
     double reflectivity = 0.0;  // [0,1]
     double transparency = 0.0;  // [0,1]
     double ior = 1.5;           // glass ~1.5
