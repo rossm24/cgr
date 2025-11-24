@@ -25,6 +25,7 @@
 #include "shade.h"
 #include "scene_accel.h"
 #include "texture_manager.h"
+#include "RNG.h"
 
 // Blender -> Renderer coordinates
 // Blender: X right, Y forward, Z up
@@ -95,12 +96,6 @@ static Vec3 shade_diffuse(const Hit& hit, const Vec3& lightPos, double lightInte
     return c;
 }
 
-struct RNG {
-    std::mt19937 gen;
-    std::uniform_real_distribution<double> U{0.0, 1.0};
-    RNG(uint32_t seed=1337) : gen(seed) {}
-    inline double next() { return U(gen); }
-};
 
 static bool extractString(const std::string& line,
                           const std::string& key,
@@ -126,15 +121,311 @@ static bool extractString(const std::string& line,
     return true;
 }
 
+static Ray makeCameraRay(double px,
+                         double py,
+                         const Camera& cam,
+                         const RenderParams& params,
+                         RNG& rng)
+{
+    // Base pinhole ray from your camera
+    Ray base = cam.rayFromPixel((float)px, (float)py);
+    Vec3 origin = base.origin;  // usually cam.pos
+    Vec3 dir    = normalize(base.dir);
+
+    // -----------------------
+    // 1) Pick a random time in shutter interval (for motion blur)
+    // -----------------------
+    double time = 0.0;
+    if (params.enableMotionBlur) {
+        double u = rng.next();
+        time = params.shutterOpen + u * (params.shutterClose - params.shutterOpen);
+    }
+
+    // -----------------------
+    // 2) Depth of field: sample lens disk & refocus at focalDistance
+    // -----------------------
+    if (params.enableDOF && params.apertureRadius > 0.0 && params.focalDistance > 0.0) {
+        // Focus point along the original pinhole ray
+        Vec3 focusPoint = origin + dir * params.focalDistance;
+
+        // Sample point on lens disk
+        double r   = std::sqrt(rng.next());
+        double phi = 2.0 * 3.14159265358979323846 * rng.next();
+        double dx  = params.apertureRadius * r * std::cos(phi);
+        double dy  = params.apertureRadius * r * std::sin(phi);
+
+        // Use camera basis (pos/right/up from your debug prints)
+        Vec3 lensOffset = dx * cam.right + dy * cam.up;
+
+        Vec3 newOrigin = cam.position + lensOffset;
+        Vec3 newDir    = normalize(focusPoint - newOrigin);
+
+        origin = newOrigin;
+        dir    = newDir;
+    }
+
+    // -----------------------
+    // 3) Camera motion blur: move camera along right over time
+    // -----------------------
+    if (params.enableMotionBlur && params.camMotionAmount != 0.0) {
+        // Map time in [shutterOpen, shutterClose] to offset in [-0.5, +0.5]
+        double mid   = 0.5 * (params.shutterOpen + params.shutterClose);
+        double span  = (params.shutterClose - params.shutterOpen);
+        double normT = (span > 0.0) ? (time - mid) / span : 0.0; // -0.5..+0.5 roughly
+
+        origin += normT * params.camMotionAmount * cam.right;
+    }
+
+    Ray ray;
+    ray.origin = origin;
+    ray.dir    = dir;
+
+    return ray;
+}
+
+static double luminance(const Vec3& c)
+{
+    return 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
+}
+
+static Vec3 sampleClamped(const std::vector<Vec3>& buf,
+                          int x, int y, int W, int H)
+{
+    if (x < 0) x = 0;
+    if (x >= W) x = W - 1;
+    if (y < 0) y = 0;
+    if (y >= H) y = H - 1;
+    return buf[y * W + x];
+}
+
+static void applyPostFX(const std::vector<Vec3>& hdr,
+                        ImagePPM& img,
+                        int W, int H,
+                        const RenderParams& params)
+{
+    // If bloom & lens flare are both off, just gamma copy
+    if (!params.enableBloom && !params.enableLensFlare) {
+        auto gc = [](double a){
+            return std::pow(std::clamp(a, 0.0, 1.0), 1.0/2.2);
+        };
+
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                const Vec3& c = hdr[y * W + x];
+                Vec3 out{ gc(c.x), gc(c.y), gc(c.z) };
+                img.set(x, y,
+                    Pixel(clamp8(out.x * 255.0),
+                          clamp8(out.y * 255.0),
+                          clamp8(out.z * 255.0)));
+            }
+        }
+        return;
+    }
+
+    // -------- 1) Bright pass --------
+    std::vector<Vec3> bright(W * H, Vec3{0.0, 0.0, 0.0});
+    double threshold = params.bloomThreshold;
+
+    for (int i = 0; i < W * H; ++i) {
+        double L = luminance(hdr[i]);
+        if (L > threshold) {
+            bright[i] = hdr[i];
+        }
+    }
+
+    // -------- 2) Separable blur (5-tap: 1 4 6 4 1 / 16) --------
+    std::vector<Vec3> tmp(W * H);
+    std::vector<Vec3> blurred(W * H);
+
+    // Horizontal blur
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            Vec3 c =
+                sampleClamped(bright, x-2, y,   W, H) * 1.0 +
+                sampleClamped(bright, x-1, y,   W, H) * 4.0 +
+                sampleClamped(bright, x,   y,   W, H) * 6.0 +
+                sampleClamped(bright, x+1, y,   W, H) * 4.0 +
+                sampleClamped(bright, x+2, y,   W, H) * 1.0;
+            tmp[y * W + x] = c * (1.0 / 16.0);
+        }
+    }
+
+    // Vertical blur
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            Vec3 c =
+                sampleClamped(tmp, x, y-2, W, H) * 1.0 +
+                sampleClamped(tmp, x, y-1, W, H) * 4.0 +
+                sampleClamped(tmp, x, y,   W, H) * 6.0 +
+                sampleClamped(tmp, x, y+1, W, H) * 4.0 +
+                sampleClamped(tmp, x, y+2, W, H) * 1.0;
+            blurred[y * W + x] = c * (1.0 / 16.0);
+        }
+    }
+
+    // -------- 3) Optional: simple lens flare ghosts --------
+    // ---- Strong Cinematic Lens Flare Ghosts ----
+    if (params.enableLensFlare) {
+        int brightestIdx = 0;
+        double bestL = 0.0;
+
+        for (int i = 0; i < W * H; ++i) {
+            double L = luminance(hdr[i]);
+            if (L > bestL) {
+                bestL = L;
+                brightestIdx = i;
+            }
+        }
+
+        int bx = brightestIdx % W;
+        int by = brightestIdx / W;
+        int cx = W / 2;
+        int cy = H / 2;
+
+        double dx = bx - cx;
+        double dy = by - cy;
+
+        // Strong ghost positions
+        std::vector<double> ghostPos = { -1.2, -0.6, 0.3, 0.7, 1.3 };
+
+        for (double g : ghostPos) {
+            int gx = int(cx + g * dx);
+            int gy = int(cy + g * dy);
+
+            // Large ghost radius
+            const int radius = 40;
+            for (int oy = -radius; oy <= radius; ++oy) {
+                for (int ox = -radius; ox <= radius; ++ox) {
+
+                    int x = gx + ox;
+                    int y = gy + oy;
+                    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+
+                    double dist = std::sqrt(ox * ox + oy * oy);
+                    if (dist > radius) continue;
+
+                    double w = 1.0 - (dist / radius);
+                    Vec3 add = hdr[brightestIdx] * (params.flareStrength * w * 0.8);
+                    blurred[y * W + x] = blurred[y * W + x] + add;
+                }
+            }
+        }
+    }
+
+
+    // -------- 4) Combine HDR + bloom, gamma, write to img --------
+    auto gc = [](double a){
+        return std::pow(std::clamp(a, 0.0, 1.0), 1.0/2.2);
+    };
+
+    double bloomK = params.bloomStrength;
+
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            int idx = y * W + x;
+
+            Vec3 c = hdr[idx] + bloomK * blurred[idx];
+
+            Vec3 out{ gc(c.x), gc(c.y), gc(c.z) };
+            img.set(x, y,
+                Pixel(clamp8(out.x * 255.0),
+                      clamp8(out.y * 255.0),
+                      clamp8(out.z * 255.0)));
+        }
+    }
+}
 
 
 
 
-
-
-int main(){
+int main(int argc, char** argv){
     try{
-        const std::string scenePath = "../ASCII/scene.txt";
+        //const std::string scenePath = "../ASCII/scene.txt";
+
+        std::string scenePath = "../ASCII/scene.txt";
+        std::string outPath   = "../Output/output.ppm";
+
+        RenderParams params;
+
+        
+
+        // Helper: does this string contain a path separator?
+        auto hasPathSep = [](const std::string& s) {
+            return s.find('/') != std::string::npos ||
+                s.find('\\') != std::string::npos;
+        };
+
+        // comand line arguments 
+        // Usage examples:
+        //   ./raytrace                   -> uses defaults
+        //   ./raytrace myscene.txt       -> overrides scenePath
+        //   ./raytrace myscene.txt my.ppm --spp 16 --max-depth 8
+        if (argc >= 2) {
+            // If first arg is not a flag, treat it as scene name
+            if (argv[1][0] != '-') {
+                std::string name = argv[1];
+
+                // If no '/' or '\' then assume it lives in ../ASCII/
+                if (!hasPathSep(name)) {
+                    scenePath = std::string("../ASCII/") + name;
+                } else {
+                    scenePath = name; // user gave full/relative path explicitly
+                }
+            }
+
+            // If second arg exists and is not a flag, treat it as output name
+            if (argc >= 3 && argv[2][0] != '-') {
+                std::string name = argv[2];
+
+                // If no '/' or '\' then save into ../Output/
+                if (!hasPathSep(name)) {
+                    outPath = std::string("../Output/") + name;
+                } else {
+                    outPath = name; // user gave full/relative path explicitly
+                }
+            }
+
+            // Parse options (we just look at args that *are* flags)
+            for (int i = 1; i < argc; ++i) {
+                std::string arg = argv[i];
+
+                if (arg == "--spp" && i + 1 < argc) {
+                    params.spp = std::stoi(argv[++i]);
+                } else if (arg == "--max-depth" && i + 1 < argc) {
+                    params.maxDepth = std::stoi(argv[++i]);
+                } else if (arg == "--eps" && i + 1 < argc) {
+                    params.eps = std::stod(argv[++i]);
+                } else if (arg == "--no-stratified") {
+                    params.stratified = false;
+                } else if (arg == "--soft-shadows" && i + 1 < argc) {
+                    params.enableSoftShadows = true;
+                    params.shadowSamples = std::stoi(argv[++i]);
+                } else if (arg == "--soft-shadow-radius" && i + 1 < argc) {
+                    params.softShadowRadius = std::stod(argv[++i]);
+                } else if (arg == "--glossy" && i + 1 < argc) {
+                    params.enableGlossy = true;
+                    params.glossySamples = std::stoi(argv[++i]);
+                } else if (arg == "-roughness" && i + 1 < argc) {
+                    params.glossyRoughness = std::stod(argv[++i]);
+                } else if (arg == "--dof" && i + 2 < argc) {
+                    params.enableDOF = true;
+                    params.apertureRadius = std::stod(argv[++i]);
+                    params.focalDistance  = std::stod(argv[++i]);
+                } else if (arg == "--motion-blur" && i + 3 < argc) {
+                    params.enableMotionBlur = true;
+                    params.camMotionAmount = std::stod(argv[++i]);
+                    params.shutterOpen  = std::stod(argv[++i]);
+                    params.shutterClose = std::stod(argv[++i]);        
+                } else if (arg == "--bloom" && i + 2 < argc) {
+                    params.enableBloom = true;
+                    params.bloomThreshold = std::stod(argv[++i]);
+                    params.bloomStrength  = std::stod(argv[++i]);
+                } else if (arg == "--lens-flare" && i + 1 < argc) {
+                    params.enableLensFlare = true;
+                    params.flareStrength = std::stod(argv[++i]);
+                }
+            }
+        }
 
         // ---------- 1) Load Camera ----------
         Camera cam;
@@ -146,7 +437,8 @@ int main(){
         // struct Light { Vec3 pos{}; double intensity=0.0; };
         std::vector<Light> lights;
 
-        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color; std::string texName;};
+        //struct CubeAscii  { Vec3 center{}; Vec3 euler{}; double edge=1.0; Vec3 color; std::string texName;};
+        struct CubeAscii  { Vec3 center{}; Vec3 euler{}; Vec3 scale{1.0, 1.0, 1.0}; Vec3 color; std::string texName;};
         struct SphereAscii{ std::string name; Vec3 center; Vec3 euler; Vec3 scale; double radius; Vec3 color; std::string texName; };
         struct PlaneAscii {
             Vec3 c0{}, c1{}, c2{}, c3{};
@@ -182,10 +474,18 @@ int main(){
                     throw std::runtime_error("CUB: trans missing");
                 extractVec3(line, "rot", C.euler);
                 extractVec3(line, "color", C.color);
-                double s1=1.0;
-                if (!extractNumber(line, "scale1d", s1))
-                    throw std::runtime_error("CUB: scale1d missing");
-                C.edge = s1;
+                //double s1=1.0;
+                //if (!extractNumber(line, "scale1d", s1))
+                  //  throw std::runtime_error("CUB: scale1d missing");
+                //C.edge = s1;
+                if (!extractVec3(line, "scale", C.scale))
+                {
+                    // Fall back to uniform scale1d=
+                    double s1 = 1.0;
+                    if (!extractNumber(line, "scale1d", s1))
+                        throw std::runtime_error("CUB: scale/scale1d missing");
+                    C.scale = {s1, s1, s1};
+                }
 
                 extractString(line, "tex", C.texName);
 
@@ -281,21 +581,15 @@ int main(){
             Vec3 euler = cubes[i].euler;
 
             // Uniform scale from scale1d
-            Vec3 scale = { cubes[i].edge, cubes[i].edge, cubes[i].edge };
+            //Vec3 scale = { cubes[i].edge, cubes[i].edge, cubes[i].edge };
+
+            Vec3 scale = cubes[i].scale;
+
 
             // T * R * S (this is correct with your composeTRS + new Mat4)
             Mat4 C = composeTRS(centerR, euler, scale);
 
-            // --- DEBUG: world-space position of the cube's local origin ---
-            Vec3 worldOrigin = Mat4::mul_point(C, Vec3{0,0,0});
-            std::cout << "Cube " << i
-                    << " center=(" << cubes[i].center.x << ", "
-                                    << cubes[i].center.y << ", "
-                                    << cubes[i].center.z << ")"
-                    << " edge=" << cubes[i].edge
-                    << " worldOrigin=(" << worldOrigin.x << ", "
-                                        << worldOrigin.y << ", "
-                                        << worldOrigin.z << ")\n";
+            
 
             // ---- NEW: attach texture if present ----
             // NEW: texture hookup
@@ -383,8 +677,8 @@ int main(){
             mats.by_id[id] = Material{
                 .kd = cubes[i].color,
                 .ks = {0.2,0.2,0.2},
-                .shininess = 64,
-                .reflectivity = 0.0
+                .shininess = 128,
+                .reflectivity = 0.4
             };
         }
 
@@ -421,28 +715,37 @@ int main(){
         // ---------- 5) Render ----------
         const int W = cam.film_w_px, H = cam.film_h_px;
         ImagePPM img(W, H, {135, 206, 235}); // background
+
+        // HDR buffer (linear colour)
+        std::vector<Vec3> hdr(W * H, Vec3{0.0, 0.0, 0.0});
+
         const Vec3 white{1,1,1};
 
         auto t0 = std::chrono::high_resolution_clock::now();
 
         SceneAccel scene{ &bvh, &infiniteShapes };
 
-        RenderParams params;
-        params.maxDepth = 6;
-        params.eps = 1e-4;
-
-        int spp = 4; // samples per pixel
-        bool stratified = true;
+        
         RNG rng(12345);
+        //params.maxDepth = 6;
+        //params.eps = 1e-4;
+
+        //int spp = 4; // samples per pixel
+        //bool stratified = true;
+
+        params.maxDepth   = 6;
+        params.eps        = 1e-4;
+        params.spp        = 4;       // formerly `int spp = 4`
+        params.stratified = true;    // formerly `bool stratified = true`
+        
 
         for (int y = 0; y < H; ++y){
             for (int x = 0; x < W; ++x){
                 Vec3 accum{0,0,0};
 
-                if (stratified) {
-                    int n = (int)std::floor(std::sqrt((double)spp) + 0.5);
-                    if (n*n != spp) n = 0; // fall back to pure jitter if spp not square
-
+                if (params.stratified) {
+                    int n = (int)std::floor(std::sqrt((double)params.spp) + 0.5);
+                    if (n*n != params.spp) n = 0; // fall back to pure jitter if spp not square
                     if (n > 0) {
                         // n x n stratified jitter
                         for (int j = 0; j < n; ++j){
@@ -451,43 +754,48 @@ int main(){
                                 double v = (j + rng.next()) / n;  // in [0,1)
                                 // If rayFromPixel expects pixel *corners*, sample at x+u,y+v.
                                 // If it expects *centers*, change to (x + (u - 0.5)), etc.
-                                Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
-                                Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                                //Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                                Ray ray = makeCameraRay(x + u, y + v, cam, params, rng);
+                                Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params, rng);
                                 accum += c;
                             }
                         }
-                        accum /= double(spp);
+                        accum /= double(params.spp);
                     } else {
                         // pure jitter (spp not a perfect square)
-                        for (int s = 0; s < spp; ++s){
+                        for (int s = 0; s < params.spp; ++s){
                             double u = rng.next(); // [0,1)
                             double v = rng.next(); // [0,1)
-                            Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
-                            Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                            //Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                            Ray ray = makeCameraRay(x + u, y + v, cam, params, rng);
+                            Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params, rng);
                             accum += c;
                         }
-                        accum /= double(spp);
+                        accum /= double(params.spp);
                     }
                 } else {
                     // plain jittered supersampling
-                    for (int s = 0; s < spp; ++s){
+                    for (int s = 0; s < params.spp; ++s){
                         double u = rng.next(); // [0,1)
                         double v = rng.next(); // [0,1)
-                        Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
-                        Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params);
+                        //Ray ray = cam.rayFromPixel((float)(x + u), (float)(y + v));
+                        Ray ray = makeCameraRay(x + u, y + v, cam, params, rng);
+                        Vec3 c  = shadeRay(ray, 0, scene, lights, mats, params, rng);
                         accum += c;
                     }
-                    accum /= double(spp);
+                    accum /= double(params.spp);
                 }
 
                 // (Optional) gamma correction — uncomment if you want nicer mid-tones
-                auto gc = [](double a){ return std::pow(std::clamp(a,0.0,1.0), 1.0/2.2); };
-                Vec3 out = { gc(accum.x), gc(accum.y), gc(accum.z) };
+                //auto gc = [](double a){ return std::pow(std::clamp(a,0.0,1.0), 1.0/2.2); };
+                //Vec3 out = { gc(accum.x), gc(accum.y), gc(accum.z) };
 
-                img.set(x, y,
-                        Pixel(clamp8(out.x * 255.0),
-                            clamp8(out.y * 255.0),
-                            clamp8(out.z * 255.0)));
+                //img.set(x, y,
+                  //      Pixel(clamp8(out.x * 255.0),
+                    //        clamp8(out.y * 255.0),
+                      //      clamp8(out.z * 255.0)));
+                int idx = y * W + x;
+                hdr[idx] = accum;
             }
         }
 
@@ -496,8 +804,10 @@ int main(){
         double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         std::cout << "Render completed in " << ms << " ms.\n";
 
+        applyPostFX(hdr, img, W, H, params);
+
         // ---------- 6) Save ----------
-        const std::string outPath = "../Output/output.ppm";
+        //const std::string outPath = "../Output/output.ppm";
         img.save(outPath);
         std::cout << "Rendered: " << outPath << "\n";
 

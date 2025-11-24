@@ -3,6 +3,7 @@
 #include <cmath>
 #include "camera.h"
 #include <limits>
+#include "RNG.h"
 
 
 static inline Vec3 reflect(const Vec3& I, const Vec3& N){
@@ -42,12 +43,107 @@ static inline bool bvhOccluded(const BVH& bvh, const Ray& r, double tMin, double
     return bvh.intersect(r, tMin, tMax, h);
 }
 
+static double shadowVisibility(const Hit& hit,
+                               const Light& L,
+                               const SceneAccel& scene,
+                               const RenderParams& params,
+                               RNG& rng)
+{
+    // Vector and distance to the light *centre*
+    Vec3 toL         = L.pos - hit.p;
+    double distToLight = length(toL);
+    if (distToLight <= 0.0) {
+        return 0.0;
+    }
+    Vec3 baseDir     = toL / distToLight;
+
+    // --- Old behaviour: hard shadows if disabled or 1 sample ---
+    if (!params.enableSoftShadows ||
+        params.shadowSamples <= 1 ||
+        params.softShadowRadius <= 0.0)
+    {
+        Ray shadowRay;
+        shadowRay.origin = hit.p + params.eps * baseDir;
+        shadowRay.dir    = baseDir;
+
+        Hit tmp;
+        bool inShadow = scene.intersect(
+            shadowRay,
+            params.eps,
+            distToLight - params.eps,
+            tmp
+        );
+
+        return inShadow ? 0.0 : 1.0;
+    }
+
+    // --- Soft shadows: sample a small disk area around the light ---
+    int   nSamples = params.shadowSamples;
+    double radius  = params.softShadowRadius;
+    double vis     = 0.0;
+
+    for (int s = 0; s < nSamples; ++s) {
+        // random point in unit disk (polar sampling)
+        double r   = std::sqrt(rng.next());
+        double phi = 2.0 * 3.14159265358979323846 * rng.next();
+        double dx  = radius * r * std::cos(phi);
+        double dz  = radius * r * std::sin(phi);
+
+        // simple disk in XZ-plane around light centre
+        Vec3 lp = L.pos + Vec3{dx, 0.0, dz};
+
+        Vec3 toSample = lp - hit.p;
+        double dist   = length(toSample);
+        if (dist <= 0.0) continue;
+        Vec3 dir      = toSample / dist;
+
+        Ray shadowRay;
+        shadowRay.origin = hit.p + params.eps * dir;
+        shadowRay.dir    = dir;
+
+        Hit tmp;
+        bool blocked = scene.intersect(
+            shadowRay,
+            params.eps,
+            dist - params.eps,
+            tmp
+        );
+
+        if (!blocked) {
+            vis += 1.0; // this sample sees the light
+        }
+    }
+
+    return vis / double(nSamples);
+}
+
+static Vec3 sampleAroundDirection(const Vec3& dir,
+                                  double roughness,
+                                  RNG& rng)
+{
+    Vec3 w = normalize(dir);
+    Vec3 a = (std::fabs(w.x) > 0.1) ? Vec3{0,1,0} : Vec3{1,0,0};
+    Vec3 v = normalize(cross(w, a));
+    Vec3 u = cross(v, w);
+
+    // Simple jitter in tangent plane
+    double rx = (rng.next() - 0.5) * roughness;
+    double ry = (rng.next() - 0.5) * roughness;
+
+    Vec3 jittered = w + rx * u + ry * v;
+    return normalize(jittered);
+}
+
+
+
+
 static Vec3 shadeHit(const Ray& ray,
                      const Hit& hit,
                      const SceneAccel& scene,
                      const std::vector<Light>& lights,
                      const MaterialDB& mats,
-                     const RenderParams& params)
+                     const RenderParams& params,
+                     RNG& rng)
 {
     if (hit.shape_id < 0) {
         return Vec3{0.0, 0.0, 0.0};
@@ -109,25 +205,11 @@ static Vec3 shadeHit(const Ray& ray,
     for (const Light& L : lights) {
         Vec3 Ldir = normalize(L.pos - hit.p);
 
-        // ---------- SHADOW RAY ----------
-        Ray shadowRay{ hit.p + params.eps * Ldir, Ldir };
-        Hit shadowHit;
-
-        Vec3 toL = L.pos - hit.p;
-        double distToLight = length(toL);   // <--- THIS line is essential
-        //Vec3 Ldir = toL / distToLight;
-
-        bool inShadow = scene.intersect(
-            shadowRay,
-            params.eps,
-            distToLight - params.eps,
-            shadowHit
-        );
-
-        if (inShadow) {
-            continue;   // skip this light contribution
+        // --- NEW: visibility in [0,1] instead of hard inShadow ---
+        double vis = shadowVisibility(hit, L, scene, params, rng);
+        if (vis <= 0.0) {
+            continue;   // fully in shadow for this light
         }
-
 
         double NdotL = std::max(0.0, dot(N, Ldir));
         if (NdotL <= 0.0) continue;
@@ -141,7 +223,8 @@ static Vec3 shadeHit(const Ray& ray,
         double specTerm = std::pow(NdotH, shininess);
         Vec3 spec = ks * (lightScale * L.intensity * specTerm);
 
-        color += diff + spec;
+        // --- NEW: scale by visibility ---
+        color += vis * (diff + spec);
     }
 
     color += ambient;
@@ -166,7 +249,8 @@ Vec3 shadeRay(const Ray& ray,
               const SceneAccel& scene,
               const std::vector<Light>& lights,
               const MaterialDB& mats,
-              const RenderParams& params)
+              const RenderParams& params,
+              RNG& rng)
 {
     if (depth > params.maxDepth) {
         return Vec3{0.0, 0.0, 0.0};
@@ -182,7 +266,7 @@ Vec3 shadeRay(const Ray& ray,
     }
 
     // ---- Local (direct) shading with your current shadeHit ----
-    Vec3 localColor = shadeHit(ray, hit, scene, lights, mats, params);
+    Vec3 localColor = shadeHit(ray, hit, scene, lights, mats, params, rng);
 
     // Get per-shape material
     const Material& mat = mats.get(hit.shape_id);
@@ -214,18 +298,41 @@ Vec3 shadeRay(const Ray& ray,
     result += baseWeight * localColor;
 
     // -------------------
-    // Reflection
+    // Reflection (perfect or glossy)
     // -------------------
     if (kr > 0.0) {
-        Vec3 Rdir = reflect(-V, N);   // incident = -V
+        Vec3 Rdir = reflect(-V, N);
         Rdir = normalize(Rdir);
 
-        Ray reflRay;
-        reflRay.origin = hit.p + params.eps * Rdir;  // small bias
-        reflRay.dir = Rdir;
+        int   numSamples = 1;
+        double rough     = 0.0;
 
-        Vec3 reflColor = shadeRay(reflRay, depth + 1, scene, lights, mats, params);
-        result += kr * reflColor;
+        // Only use glossy if explicitly enabled and sensible params
+        if (params.enableGlossy &&
+            params.glossySamples > 1 &&
+            params.glossyRoughness > 0.0)
+        {
+            numSamples = params.glossySamples;
+            rough      = params.glossyRoughness;
+        }
+
+        Vec3 reflAccum{0,0,0};
+
+        for (int i = 0; i < numSamples; ++i) {
+            Vec3 dir = (rough > 0.0)
+                    ? sampleAroundDirection(Rdir, rough, rng)
+                    : Rdir;
+
+            Ray reflRay;
+            reflRay.origin = hit.p + params.eps * dir;
+            reflRay.dir    = dir;
+
+            Vec3 rc = shadeRay(reflRay, depth + 1, scene, lights, mats, params, rng);
+            reflAccum += rc;
+        }
+
+        reflAccum /= double(numSamples);
+        result += kr * reflAccum;
     }
 
     // -------------------
@@ -242,7 +349,7 @@ Vec3 shadeRay(const Ray& ray,
             refrRay.origin = hit.p + params.eps * Tdir;
             refrRay.dir = Tdir;
 
-            Vec3 refrColor = shadeRay(refrRay, depth + 1, scene, lights, mats, params);
+            Vec3 refrColor = shadeRay(refrRay, depth + 1, scene, lights, mats, params, rng);
             result += kt * refrColor;
         }
         // else: total internal reflection (reflection already handled above)
