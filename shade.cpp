@@ -240,10 +240,6 @@ static Vec3 shadeHit(const Ray& ray,
 }
 
 
-
-
-// assume reflect(...) and refract(...) helpers are already above this
-
 Vec3 shadeRay(const Ray& ray,
               int depth,
               const SceneAccel& scene,
@@ -357,76 +353,3 @@ Vec3 shadeRay(const Ray& ray,
 
     return result;
 }
-
-
-
-
-
-
-/*
-Vec3 shadeRay(const Ray& ray,
-              int depth,
-              const SceneAccel& scene,
-              const std::vector<Light>& lights,
-              const MaterialDB& mats,
-              const RenderParams& params)
-{
-    if (depth > params.maxDepth) {
-        return Vec3{0.0, 0.0, 0.0};
-    }
-
-    Hit hit;
-    const double tMin = params.eps;
-    const double tMax = std::numeric_limits<double>::infinity();
-
-    if (!scene.intersect(ray, tMin, tMax, hit)) {
-        // Background colour (same as your ImagePPM background or a gradient)
-        return Vec3{0.0, 0.0, 0.0};
-    }
-
-    // Look up material
-    const Material* mat = nullptr;
-    if (auto it = mats.by_id.find(hit.shape_id); it != mats.by_id.end()) {
-        mat = &it->second;
-    }
-
-    double reflectivity = mat ? mat->reflectivity : 0.0;
-    double transparency = mat ? mat->transparency : 0.0;
-    double ior          = mat ? mat->ior          : 1.0;
-
-    // Local shading (diffuse + spec + texture) using shadeHit
-    Vec3 localColor = shadeHit(ray, hit, scene, lights, mats, params);
-
-    Vec3 finalColor = localColor;
-
-    // Reflection
-    if (reflectivity > 0.0 && depth < params.maxDepth) {
-        Vec3 N = hit.n;
-        Vec3 Rdir = reflect(ray.dir, N);
-        Ray reflRay{ hit.p + params.eps * Rdir, Rdir };
-
-        Vec3 reflCol = shadeRay(reflRay, depth + 1, scene, lights, mats, params);
-
-        finalColor = (1.0 - reflectivity) * finalColor + reflectivity * reflCol;
-    }
-
-    // Refraction (if you used it in Module 2; otherwise you can skip this block)
-    if (transparency > 0.0 && depth < params.maxDepth) {
-        Vec3 N = hit.n;
-        Vec3 Tdir;
-        if (refract(ray.dir, N, ior, Tdir)) {
-            Ray refrRay{ hit.p + params.eps * Tdir, Tdir };
-            Vec3 refrCol = shadeRay(refrRay, depth + 1, scene, lights, mats, params);
-            finalColor = (1.0 - transparency) * finalColor + transparency * refrCol;
-        }
-    }
-
-    // Clamp
-    finalColor.x = std::min(1.0, std::max(0.0, finalColor.x));
-    finalColor.y = std::min(1.0, std::max(0.0, finalColor.y));
-    finalColor.z = std::min(1.0, std::max(0.0, finalColor.z));
-
-    return finalColor;
-}
-
-*/
