@@ -114,19 +114,52 @@ bool Plane::intersect(const Ray& worldRay,
     // -------------------
     // We now have hit.p in world space.
     // Treat the plane as a tiled floor in XZ.
-    double scale = 0.5; // tweak this to control tile size
+    // -------------------------------------------
+    // Proper UV for the quad (c0,c1,c2,c3)
+    // -------------------------------------------
 
-    double u = hit.p.x * scale;
-    double v = hit.p.z * scale;
+    // hit point in object space:
+    Vec3 p_obj = r.origin + r.dir * bestT;
 
-    // Wrap to [0,1)
-    u = u - std::floor(u);
-    v = v - std::floor(v);
+    // Build in-plane axes from the quad corners:
+    Vec3 U = c1 - c0;     // one edge
+    Vec3 V = c3 - c0;     // the other edge (assuming quad is c0,c1,c2,c3 in order)
 
-    hit.u = u;
-    hit.v = v;
+    // Lengths:
+    double lenU = std::sqrt(dot(U, U));
+    double lenV = std::sqrt(dot(V, V));
 
-    return true;
+    if (lenU > 0.0 && lenV > 0.0) {
+        // Normalised axes:
+        Vec3 Udir = U / lenU;
+        Vec3 Vdir = V / lenV;
+
+        // Vector from c0 to hit point:
+        Vec3 rel = p_obj - c0;
+
+        // Project onto plane axes:
+        double u_local = dot(rel, Udir);
+        double v_local = dot(rel, Vdir);
+
+        // Normalise to [0,1]
+        double u = u_local / lenU;
+        double v = v_local / lenV;
+
+        // Optional tiling (repeat 3×3 etc.)
+        double tile = 1.0;
+        u *= tile;
+        v *= tile;
+
+        // Wrap to [0,1)
+        u = u - floor(u);
+        v = v - floor(v);
+
+        hit.u = u;
+        hit.v = v;
+
+        return true;
+    }
+
 }
 
 AABB Plane::objectBounds() const
