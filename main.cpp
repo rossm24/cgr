@@ -423,6 +423,8 @@ int main(int argc, char** argv){
                 } else if (arg == "--lens-flare" && i + 1 < argc) {
                     params.enableLensFlare = true;
                     params.flareStrength = std::stod(argv[++i]);
+                } else if (arg == "--light-scale" && i + 1 < argc) {
+                    params.lightScale = std::stod(argv[++i]);
                 }
             }
         }

@@ -186,7 +186,7 @@ static Vec3 shadeHit(const Ray& ray,
     }
 
     // Slightly reduce specular overall so highlights don’t saturate
-    ks = ks * 0.3;
+    //ks = ks * 0.3;
 
     // -----------------------
     // 3. Blinn-Phong lighting
@@ -200,12 +200,12 @@ static Vec3 shadeHit(const Ray& ray,
     Vec3 ambient = 0.05 * kd;
 
     // Global light scale: your exported intensities are quite large
-    const double lightScale = 0.02;
+    const double lightScale = params.lightScale;
 
     for (const Light& L : lights) {
         Vec3 Ldir = normalize(L.pos - hit.p);
 
-        // --- NEW: visibility in [0,1] instead of hard inShadow ---
+        // --- visibility in [0,1] instead of hard inShadow ---
         double vis = shadowVisibility(hit, L, scene, params, rng);
         if (vis <= 0.0) {
             continue;   // fully in shadow for this light

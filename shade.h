@@ -47,6 +47,7 @@ struct RenderParams {
     bool   enableLensFlare   = false;
     double flareStrength     = 0.4;  // overall strength of ghosts
 
+    double lightScale = 1.0;   // default 
 };
 
 Vec3 shadeRay(const Ray& ray,
