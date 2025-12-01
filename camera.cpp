@@ -259,6 +259,15 @@ void Camera::loadFromSceneTxt(const std::string& path) {
             film_h_px = 600;
         }
 
+        // --- NEW: adjust sensor_h_mm to match Blender's horizontal sensor fit ---
+        {
+            double aspect = static_cast<double>(film_w_px) / static_cast<double>(film_h_px);
+            // Blender keeps horizontal FOV fixed, so effective sensor height is:
+            //   sensor_h_eff = sensor_w / aspect
+            double sensor_h_eff = sensor_w_mm / aspect;
+            sensor_h_mm = sensor_h_eff;
+        }
+
         // build the camera basis AFTER we've fixed axes
         buildBasis();
 
