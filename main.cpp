@@ -527,42 +527,6 @@ int main(int argc, char** argv){
             lights.push_back(Light{ /*pos*/{4,1,6}, /*color*/{1,1,1}, /*intensity*/80.0 });
         }
 
-        
-
-        // ============================================================
-        // DEBUG: check whether any Blender spheres physically overlap
-        // ============================================================
-        std::cout << "=== Checking for sphere-sphere overlaps ===\n";
-
-        for (size_t i = 0; i < spheres.size(); ++i) {
-            for (size_t j = i + 1; j < spheres.size(); ++j) {
-
-                const auto& A = spheres[i];
-                const auto& B = spheres[j];
-
-                // distance between centres
-                Vec3 d = A.center - B.center;
-                double dist = std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
-
-                // crude “radius” = max axis (consistent with your C++ ellipsoid)
-                double rA = std::max({ std::fabs(A.scale.x),
-                                    std::fabs(A.scale.y),
-                                    std::fabs(A.scale.z) });
-
-                double rB = std::max({ std::fabs(B.scale.x),
-                                    std::fabs(B.scale.y),
-                                    std::fabs(B.scale.z) });
-
-                if (dist < rA + rB) {
-                    std::cout << "Overlap: SPH[" << i << "] and SPH[" << j << "] "
-                            << "dist=" << dist
-                            << " < rA+rB=" << (rA + rB) << "\n";
-                }
-            }
-        }
-
-        std::cout << "=== End of overlap test ===\n";
-
         TextureManager texMgr;
 
         
@@ -631,10 +595,6 @@ int main(int argc, char** argv){
             shapes.push_back(sp.get());
             owned.push_back(std::move(sp));
 
-            std::cerr << "[SPH] " << S.name << " center=("
-                << S.center.x << ", " << S.center.y << ", " << S.center.z << ") "
-                << "scale=("
-                << S.scale.x  << ", " << S.scale.y  << ", " << S.scale.z  << ")\n";
         }
 
 
@@ -690,7 +650,7 @@ int main(int argc, char** argv){
             mats.by_id[id] = Material{
                 .kd = spheres[i].color,
                 .ks = {0.3,0.3,0.3},
-                .shininess = 128,
+                .shininess = 64,
                 .reflectivity = 0.4
             };
         }
