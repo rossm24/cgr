@@ -79,21 +79,6 @@ static inline uint8_t clamp8(double v){
     return (uint8_t)i;
 }
 
-static Vec3 shade_diffuse(const Hit& hit, const Vec3& lightPos, double lightIntensity, const Vec3& albedo){
-    Vec3 Lvec = lightPos - hit.p;
-    double r2  = std::max(1e-8, dot(Lvec, Lvec));
-    Vec3 Ldir  = normalize(Lvec);
-    double ndl = std::max(0.0, dot(hit.n, Ldir));
-    double scale = (lightIntensity / r2) * ndl;
-
-    Vec3 c = { albedo.x * scale, albedo.y * scale, albedo.z * scale };
-    // tiny ambient
-    c.x += 0.02 * albedo.x;
-    c.y += 0.02 * albedo.y;
-    c.z += 0.02 * albedo.z;
-    return c;
-}
-
 
 static bool extractString(const std::string& line,
                           const std::string& key,
