@@ -1,5 +1,3 @@
-// main.cpp — render all shapes declared in scene.txt (CAM, LGT, CUB, SPH, PLN)
-
 #include <iostream>
 #include <fstream>
 #include <sstream>

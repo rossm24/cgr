@@ -57,12 +57,3 @@ Vec3 shadeRay(const Ray& ray,
               const MaterialDB& mats,
               const RenderParams& params,
               RNG& rng);
-
-
-
-/*
-struct RenderParams {
-    int    maxDepth = 6;
-    double eps      = 1e-4; // bias for secondary rays
-};
-*/

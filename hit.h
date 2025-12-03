@@ -13,7 +13,4 @@ struct Hit {
     double v = 0.0;
 
     const Shape* shape = nullptr; // hit shape (nullptr if none)
-
-    //const Material* mat = nullptr;
-    //const Texture*  texture = nullptr;
 };

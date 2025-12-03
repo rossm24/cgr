@@ -118,13 +118,3 @@ bool Cube::intersect(const Ray& worldRay, double tMin, double tMax, Hit& hit) co
 
     return true;
 }
-
-
-/*
-// finalize (handles world tMin/tMax and closest hit logic)
-    return commitFromObjectSpace(worldRay, r, t_obj, n_obj, hit, tMin, tMax);
-
-
-
-    
-*/

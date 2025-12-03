@@ -1,4 +1,3 @@
-// scene_accel.h
 #pragma once
 #include "bvh.h"
 #include "shape.h"
